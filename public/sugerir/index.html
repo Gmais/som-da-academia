@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sugira uma música</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/tokens.css" />
+<link rel="stylesheet" href="/sugerir/sugerir.css" />
+</head>
+<body>
+
+  <main class="screen">
+
+    <header class="hero">
+      <span class="eq-bars eq-bars--big" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+      <h1>Sugira a<br>próxima música</h1>
+      <p class="hero__context">tocando agora: <strong id="context-name">carregando…</strong></p>
+    </header>
+
+    <section class="search">
+      <input
+        id="search-input"
+        type="search"
+        placeholder="Busque por música ou artista…"
+        autocomplete="off"
+        inputmode="search"
+      />
+      <div id="results" class="results" aria-live="polite"></div>
+    </section>
+
+    <div id="toast" class="toast" hidden></div>
+
+  </main>
+
+  <script src="/sugerir/sugerir.js"></script>
+</body>
+</html>

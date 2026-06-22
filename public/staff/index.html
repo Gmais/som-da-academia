@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Som da Academia — Painel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/tokens.css" />
+<link rel="stylesheet" href="/staff/staff.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar__title">
+      <span class="eq-bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+      <h1>SOM DA ACADEMIA</h1>
+    </div>
+    <div class="topbar__clock" id="clock">--:--</div>
+  </header>
+
+  <main class="layout">
+
+    <section class="active-banner" id="active-banner">
+      <span class="active-banner__label">contexto ativo agora</span>
+      <span class="active-banner__name" id="active-context-name">—</span>
+    </section>
+
+    <section class="strips" id="strips" aria-label="Contextos e filas de sugestão">
+      <!-- preenchido via JS -->
+    </section>
+
+    <aside class="sidebar">
+      <div class="card">
+        <h2>Convide os alunos</h2>
+        <p class="muted">Imprima ou exiba este QR code num totem perto da recepção. Ele leva direto pra tela de sugestão — o sistema já sabe sozinho qual contexto está ativo.</p>
+        <div class="qr-box">
+          <img id="qr-img" alt="QR code para sugestão de música" />
+        </div>
+        <a id="qr-link" href="/sugerir" target="_blank" class="muted small">abrir página de sugestão →</a>
+      </div>
+
+      <div class="card">
+        <h2>Horários dos contextos</h2>
+        <p class="muted">Ajuste os blocos pra bater com a rotina real da sua academia.</p>
+        <div id="context-editor"></div>
+      </div>
+    </aside>
+
+  </main>
+
+  <script src="/staff/staff.js"></script>
+</body>
+</html>
