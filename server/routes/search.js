@@ -1,4 +1,15 @@
-try {
+const express = require('express');
+const { searchTracks } = require('../spotify');
+
+const router = express.Router();
+
+router.get('/', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) {
+    return res.json({ resultados: [] });
+  }
+
+  try {
     const resultados = await searchTracks(q);
     res.json({ resultados });
   } catch (err) {
@@ -8,3 +19,6 @@ try {
       detalhe: err.message,
     });
   }
+});
+
+module.exports = router;
