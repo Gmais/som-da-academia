@@ -46,6 +46,14 @@ function ensureSchema() {
           criado_em BIGINT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS spotify_auth (
+          id INTEGER PRIMARY KEY DEFAULT 1,
+          access_token TEXT,
+          refresh_token TEXT,
+          expires_at BIGINT,
+          CONSTRAINT single_row CHECK (id = 1)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_queue_context_status ON queue_items(context_id, status);
         CREATE INDEX IF NOT EXISTS idx_suggestion_log_token ON suggestion_log(token, criado_em);
       `);

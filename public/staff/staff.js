@@ -6,6 +6,12 @@ const qrImg = document.getElementById('qr-img');
 const addContextSelect = document.getElementById('add-context-select');
 const addSearchInput = document.getElementById('add-search-input');
 const addResultsEl = document.getElementById('add-results');
+const spotifyStatusEl = document.getElementById('spotify-status');
+const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
+const spotifyPauseBtn = document.getElementById('spotify-pause-btn');
+
+let spotifyDeviceId = null;
+let spotifyPlayer = null;
 
 let knownContexts = [];
 let addDebounceTimer = null;
@@ -44,8 +50,9 @@ function renderTrackRow(item) {
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
-        <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener">Abrir</a>
-        ${!isPlaying ? `<button class="btn btn--primary" data-action="tocando" data-id="${item.id}">Tocando</button>` : `<button class="btn btn--primary" data-action="tocada" data-id="${item.id}">Tocada</button>`}
+        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>▶ Tocar</button>
+        ${!isPlaying ? `<button class="btn btn--ghost" data-action="tocando" data-id="${item.id}">marcar tocando</button>` : `<button class="btn btn--ghost" data-action="tocada" data-id="${item.id}">marcar tocada</button>`}
+        <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
         <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
       </div>
     </div>
@@ -136,6 +143,40 @@ strips.addEventListener('click', async (e) => {
     const id = Number(toggle.dataset.toggle);
     viewingContextId = viewingContextId === id ? null : id;
     loadQueue();
+    return;
+  }
+
+  const playBtn = e.target.closest('[data-play-id]');
+  if (playBtn && !playBtn.disabled) {
+    const queueItemId = playBtn.dataset.playId;
+    const originalText = playBtn.textContent;
+    playBtn.disabled = true;
+    playBtn.textContent = 'Tocando…';
+    try {
+      const res = await fetch('/api/spotify/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetch(`/api/queue/${queueItemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'tocando' }),
+        });
+        spotifyPauseBtn.hidden = false;
+        loadQueue();
+      } else {
+        alert(data.erro || 'Não foi possível tocar essa música.');
+        playBtn.disabled = false;
+        playBtn.textContent = originalText;
+      }
+    } catch {
+      alert('Erro de conexão ao tentar tocar.');
+      playBtn.disabled = false;
+      playBtn.textContent = originalText;
+    }
     return;
   }
 
@@ -261,3 +302,72 @@ addResultsEl.addEventListener('click', async (e) => {
     btn.textContent = '+ Adicionar';
   }
 });
+
+// --- Conexão e player de verdade do Spotify ---
+
+async function checkSpotifyStatus() {
+  try {
+    const res = await fetch('/api/spotify/status');
+    const data = await res.json();
+    if (data.connected) {
+      spotifyConnectBtn.hidden = true;
+      if (!spotifyPlayer) {
+        spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
+        initSpotifyPlayer();
+      }
+    } else {
+      spotifyStatusEl.textContent = 'Spotify ainda não conectado.';
+      spotifyConnectBtn.hidden = false;
+    }
+  } catch {
+    spotifyStatusEl.textContent = 'Não foi possível verificar a conexão com o Spotify.';
+  }
+}
+
+function initSpotifyPlayer() {
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    spotifyPlayer = new Spotify.Player({
+      name: 'Som da Academia',
+      getOAuthToken: async (callback) => {
+        const res = await fetch('/api/spotify/token');
+        const data = await res.json();
+        callback(data.accessToken);
+      },
+      volume: 0.8,
+    });
+
+    spotifyPlayer.addListener('ready', ({ device_id }) => {
+      spotifyDeviceId = device_id;
+      spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>player pronto ✓</strong>';
+      loadQueue(); // re-renderiza pra habilitar os botões "Tocar"
+    });
+
+    spotifyPlayer.addListener('not_ready', () => {
+      spotifyDeviceId = null;
+      spotifyStatusEl.textContent = 'Player do Spotify desconectado.';
+    });
+
+    spotifyPlayer.addListener('authentication_error', () => {
+      spotifyStatusEl.textContent = 'Erro de autenticação com o Spotify. Tente reconectar.';
+      spotifyConnectBtn.hidden = false;
+    });
+
+    spotifyPlayer.connect();
+  };
+
+  // Se o SDK já carregou antes desse ponto (cache do navegador), chama na hora.
+  if (window.Spotify) {
+    window.onSpotifyWebPlaybackSDKReady();
+  }
+}
+
+spotifyPauseBtn.addEventListener('click', async () => {
+  await fetch('/api/spotify/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: spotifyDeviceId }),
+  });
+});
+
+checkSpotifyStatus();
+setInterval(checkSpotifyStatus, 1000 * 20);

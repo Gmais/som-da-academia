@@ -26,6 +26,12 @@
       <span class="active-banner__name" id="active-context-name">—</span>
     </section>
 
+    <section class="spotify-bar" id="spotify-bar">
+      <span id="spotify-status">verificando conexão com o Spotify…</span>
+      <a href="/api/spotify/login" id="spotify-connect-btn" class="btn btn--primary" hidden>Conectar Spotify</a>
+      <button id="spotify-pause-btn" class="btn btn--ghost" hidden>⏸ Pausar</button>
+    </section>
+
     <section class="strips" id="strips" aria-label="Contextos e filas de sugestão">
       <!-- preenchido via JS -->
     </section>
@@ -57,6 +63,7 @@
 
   </main>
 
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
   <script src="/staff/staff.js"></script>
 </body>
 </html>
