@@ -8,6 +8,7 @@ const contextsRouter = require('./routes/contexts');
 const searchRouter = require('./routes/search');
 const queueRouter = require('./routes/queue');
 const qrcodeRouter = require('./routes/qrcode');
+const debugRouter = require('./routes/debug');
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(cookieParser());
 app.use('/api/contexts', contextsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/qrcode', qrcodeRouter);
+app.use('/api/_debug', debugRouter); // TEMPORÁRIO — remover depois do diagnóstico
 // queueRouter cuida de GET /api/queue, POST /api/queue/suggestions e PATCH /api/queue/:id
 app.use('/api/queue', queueRouter);
 
