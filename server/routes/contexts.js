@@ -1,36 +1,45 @@
 const express = require('express');
-const db = require('../db');
+const { query } = require('../db');
 const { getActiveContext } = require('../contextHelper');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
-  const contexts = db.prepare('SELECT * FROM contexts ORDER BY ordem ASC').all();
-  const active = getActiveContext(contexts);
-  res.json({
-    contexts,
-    activeContextId: active ? active.id : null,
-  });
+router.get('/', async (req, res, next) => {
+  try {
+    const { rows: contexts } = await query('SELECT * FROM contexts ORDER BY ordem ASC');
+    const active = getActiveContext(contexts);
+    res.json({
+      contexts,
+      activeContextId: active ? active.id : null,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.patch('/:id', (req, res) => {
-  const { id } = req.params;
-  const { nome, hora_inicio, hora_fim, cor } = req.body;
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { nome, hora_inicio, hora_fim, cor } = req.body;
 
-  const existing = db.prepare('SELECT * FROM contexts WHERE id = ?').get(id);
-  if (!existing) return res.status(404).json({ erro: 'Contexto não encontrado.' });
+    const { rows: existingRows } = await query('SELECT * FROM contexts WHERE id = $1', [id]);
+    if (!existingRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
 
-  db.prepare(
-    `UPDATE contexts SET
-      nome = COALESCE(?, nome),
-      hora_inicio = COALESCE(?, hora_inicio),
-      hora_fim = COALESCE(?, hora_fim),
-      cor = COALESCE(?, cor)
-     WHERE id = ?`
-  ).run(nome ?? null, hora_inicio ?? null, hora_fim ?? null, cor ?? null, id);
+    await query(
+      `UPDATE contexts SET
+        nome = COALESCE($1, nome),
+        hora_inicio = COALESCE($2, hora_inicio),
+        hora_fim = COALESCE($3, hora_fim),
+        cor = COALESCE($4, cor)
+       WHERE id = $5`,
+      [nome ?? null, hora_inicio ?? null, hora_fim ?? null, cor ?? null, id]
+    );
 
-  const updated = db.prepare('SELECT * FROM contexts WHERE id = ?').get(id);
-  res.json(updated);
+    const { rows: updatedRows } = await query('SELECT * FROM contexts WHERE id = $1', [id]);
+    res.json(updatedRows[0]);
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
