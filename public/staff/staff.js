@@ -37,7 +37,7 @@ function renderTrackRow(item) {
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
-        <a class="btn btn--ghost" href="https://open.spotify.com/track/${item.spotify_track_id}" target="_blank" rel="noopener">Abrir</a>
+        <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener">Abrir</a>
         ${!isPlaying ? `<button class="btn btn--primary" data-action="tocando" data-id="${item.id}">Tocando</button>` : `<button class="btn btn--primary" data-action="tocada" data-id="${item.id}">Tocada</button>`}
         <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
       </div>

@@ -30,7 +30,7 @@ function ensureSchema() {
         CREATE TABLE IF NOT EXISTS queue_items (
           id SERIAL PRIMARY KEY,
           context_id INTEGER NOT NULL REFERENCES contexts(id),
-          spotify_track_id TEXT NOT NULL,
+          track_id TEXT NOT NULL,
           nome TEXT NOT NULL,
           artista TEXT NOT NULL,
           capa_url TEXT,
@@ -48,6 +48,24 @@ function ensureSchema() {
 
         CREATE INDEX IF NOT EXISTS idx_queue_context_status ON queue_items(context_id, status);
         CREATE INDEX IF NOT EXISTS idx_suggestion_log_token ON suggestion_log(token, criado_em);
+      `);
+
+      // Migração segura: bancos criados antes desta versão têm a coluna
+      // chamada "spotify_track_id" (já que a busca antes era no Spotify).
+      // Renomeia automaticamente se ainda não tiver sido renomeada.
+      await pool.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'queue_items' AND column_name = 'spotify_track_id'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'queue_items' AND column_name = 'track_id'
+          ) THEN
+            ALTER TABLE queue_items RENAME COLUMN spotify_track_id TO track_id;
+          END IF;
+        END $$;
       `);
 
       const { rows } = await pool.query('SELECT COUNT(*) AS n FROM contexts');

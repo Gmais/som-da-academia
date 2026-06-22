@@ -1,5 +1,5 @@
 const express = require('express');
-const { searchTracks } = require('../spotify');
+const { searchTracks } = require('../catalog');
 
 const router = express.Router();
 
@@ -14,10 +14,7 @@ router.get('/', async (req, res) => {
     res.json({ resultados });
   } catch (err) {
     console.error(err);
-    res.status(502).json({
-      erro: 'Não foi possível buscar no Spotify agora.',
-      detalhe: err.message,
-    });
+    res.status(502).json({ erro: 'Não foi possível buscar músicas agora.' });
   }
 });
 

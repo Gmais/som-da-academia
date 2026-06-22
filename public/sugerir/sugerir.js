@@ -51,7 +51,7 @@ function renderResults(resultados) {
           <div class="result__artist">${escapeHtml(r.artista)}</div>
         </div>
         <span class="result__duration">${fmtDuration(r.duracaoMs)}</span>
-        <button data-track-id="${r.spotifyTrackId}"
+        <button data-track-id="${r.trackId}"
                 data-nome="${escapeHtml(r.nome)}"
                 data-artista="${escapeHtml(r.artista)}"
                 data-capa="${r.capaUrl || ''}"
@@ -100,7 +100,7 @@ resultsEl.addEventListener('click', async (e) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        spotifyTrackId: btn.dataset.trackId,
+        trackId: btn.dataset.trackId,
         nome: btn.dataset.nome,
         artista: btn.dataset.artista,
         capaUrl: btn.dataset.capa,

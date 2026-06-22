@@ -67,9 +67,9 @@ router.get('/', async (req, res, next) => {
 // POST /api/queue/suggestions -> aluno sugere uma música.
 router.post('/suggestions', async (req, res, next) => {
   try {
-    const { spotifyTrackId, nome, artista, capaUrl, duracaoMs } = req.body;
+    const { trackId, nome, artista, capaUrl, duracaoMs } = req.body;
 
-    if (!spotifyTrackId || !nome || !artista) {
+    if (!trackId || !nome || !artista) {
       return res.status(400).json({ erro: 'Música inválida.' });
     }
 
@@ -97,8 +97,8 @@ router.post('/suggestions', async (req, res, next) => {
     const desdeRepeticao = agora - JANELA_ANTI_REPETICAO_MIN * 60 * 1000;
     const { rows: repeatRows } = await query(
       `SELECT COUNT(*) as n FROM queue_items
-       WHERE context_id = $1 AND spotify_track_id = $2 AND status != 'removida' AND criado_em > $3`,
-      [active.id, spotifyTrackId, desdeRepeticao]
+       WHERE context_id = $1 AND track_id = $2 AND status != 'removida' AND criado_em > $3`,
+      [active.id, trackId, desdeRepeticao]
     );
     if (Number(repeatRows[0].n) > 0) {
       return res.status(409).json({
@@ -110,10 +110,10 @@ router.post('/suggestions', async (req, res, next) => {
 
     const { rows: insertedRows } = await query(
       `INSERT INTO queue_items
-        (context_id, spotify_track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+        (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
        VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)
        RETURNING id`,
-      [active.id, spotifyTrackId, nome, artista, capaUrl || null, duracaoMs || null, agora]
+      [active.id, trackId, nome, artista, capaUrl || null, duracaoMs || null, agora]
     );
 
     await query('INSERT INTO suggestion_log (token, criado_em) VALUES ($1, $2)', [token, agora]);
