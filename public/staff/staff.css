@@ -277,6 +277,77 @@ body {
   border-radius: 4px;
 }
 
+#add-context-select {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--paper-dim);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  background: #fff;
+  color: var(--ink);
+}
+
+#add-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--paper-dim);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+#add-search-input:focus {
+  outline: none;
+  border-color: var(--amber);
+}
+
+.add-results {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.add-result {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.add-result img {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--paper-dim);
+}
+
+.add-result__info { min-width: 0; }
+
+.add-result__name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.add-result__artist {
+  font-size: 11px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }

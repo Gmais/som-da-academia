@@ -3,6 +3,13 @@ const activeBanner = document.getElementById('active-context-name');
 const clockEl = document.getElementById('clock');
 const contextEditor = document.getElementById('context-editor');
 const qrImg = document.getElementById('qr-img');
+const addContextSelect = document.getElementById('add-context-select');
+const addSearchInput = document.getElementById('add-search-input');
+const addResultsEl = document.getElementById('add-results');
+
+let knownContexts = [];
+let addDebounceTimer = null;
+let addLastQuery = '';
 
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
@@ -84,6 +91,23 @@ function render(data) {
     .join('');
 
   renderContextEditor(data.contexts);
+  renderAddContextSelect(data.contexts, data.activeContext);
+}
+
+function renderAddContextSelect(contexts, activeContext) {
+  knownContexts = contexts;
+  const previousValue = addContextSelect.value;
+  const hasPrevious = contexts.some((c) => String(c.id) === previousValue);
+
+  addContextSelect.innerHTML = contexts
+    .map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)
+    .join('');
+
+  if (hasPrevious) {
+    addContextSelect.value = previousValue;
+  } else if (activeContext) {
+    addContextSelect.value = String(activeContext.id);
+  }
 }
 
 function renderContextEditor(contexts) {
@@ -154,3 +178,86 @@ tickClock();
 setInterval(tickClock, 1000 * 10);
 loadQueue();
 setInterval(loadQueue, 1000 * 15);
+
+// --- Adicionar música direto (busca independente da fila, não é afetada pelo auto-refresh) ---
+
+function renderAddResults(resultados) {
+  if (!resultados.length) {
+    addResultsEl.innerHTML = addLastQuery
+      ? '<div class="empty-row">Nenhum resultado.</div>'
+      : '';
+    return;
+  }
+
+  addResultsEl.innerHTML = resultados
+    .map(
+      (r) => `
+      <div class="add-result">
+        <img src="${r.capaUrl || ''}" alt="" loading="lazy" />
+        <div class="add-result__info">
+          <div class="add-result__name">${escapeHtml(r.nome)}</div>
+          <div class="add-result__artist">${escapeHtml(r.artista)}</div>
+        </div>
+        <button class="btn btn--primary" data-add-track-id="${r.trackId}"
+                data-add-nome="${escapeHtml(r.nome)}"
+                data-add-artista="${escapeHtml(r.artista)}"
+                data-add-capa="${r.capaUrl || ''}"
+                data-add-duracao="${r.duracaoMs || ''}">+ Adicionar</button>
+      </div>`
+    )
+    .join('');
+}
+
+addSearchInput.addEventListener('input', () => {
+  clearTimeout(addDebounceTimer);
+  const q = addSearchInput.value.trim();
+  addLastQuery = q;
+
+  if (q.length < 2) {
+    addResultsEl.innerHTML = '';
+    return;
+  }
+
+  addDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (addLastQuery === q) renderAddResults(data.resultados || []);
+    } catch {
+      addResultsEl.innerHTML = '<div class="empty-row">Erro ao buscar.</div>';
+    }
+  }, 350);
+});
+
+addResultsEl.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-add-track-id]');
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Adicionando…';
+
+  try {
+    const res = await fetch('/api/queue/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contextId: Number(addContextSelect.value),
+        trackId: btn.dataset.addTrackId,
+        nome: btn.dataset.addNome,
+        artista: btn.dataset.addArtista,
+        capaUrl: btn.dataset.addCapa,
+        duracaoMs: Number(btn.dataset.addDuracao) || null,
+      }),
+    });
+    if (res.ok) {
+      btn.textContent = 'Adicionada ✓';
+      loadQueue();
+    } else {
+      btn.disabled = false;
+      btn.textContent = '+ Adicionar';
+    }
+  } catch {
+    btn.disabled = false;
+    btn.textContent = '+ Adicionar';
+  }
+});

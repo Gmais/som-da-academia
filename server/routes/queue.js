@@ -64,6 +64,33 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// POST /api/queue/add -> staff adiciona música direto num contexto (sem guardrails de aluno)
+router.post('/add', async (req, res, next) => {
+  try {
+    const { contextId, trackId, nome, artista, capaUrl, duracaoMs } = req.body;
+
+    if (!contextId || !trackId || !nome || !artista) {
+      return res.status(400).json({ erro: 'Dados incompletos.' });
+    }
+
+    const { rows: contextRows } = await query('SELECT * FROM contexts WHERE id = $1', [contextId]);
+    if (!contextRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
+
+    const agora = Date.now();
+    const { rows: insertedRows } = await query(
+      `INSERT INTO queue_items
+        (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)
+       RETURNING id`,
+      [contextId, trackId, nome, artista, capaUrl || null, duracaoMs || null, agora]
+    );
+
+    res.status(201).json({ ok: true, queueItemId: insertedRows[0].id });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/queue/suggestions -> aluno sugere uma música.
 router.post('/suggestions', async (req, res, next) => {
   try {
