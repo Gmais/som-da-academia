@@ -305,15 +305,68 @@ addResultsEl.addEventListener('click', async (e) => {
 
 // --- Conexão e player de verdade do Spotify ---
 
+let spotifySdkReady = false;
+let spotifyConnected = false;
+
+// IMPORTANTE: o SDK do Spotify chama esta função assim que termina de carregar.
+// Ela precisa existir ANTES do SDK carregar, por isso é definida logo aqui no
+// topo (não dentro de outra função). Quando o SDK avisar que está pronto,
+// guardamos isso e tentamos iniciar o player se a conexão também já estiver ok.
+window.onSpotifyWebPlaybackSDKReady = () => {
+  spotifySdkReady = true;
+  maybeStartPlayer();
+};
+
+function maybeStartPlayer() {
+  if (!spotifySdkReady || !spotifyConnected || spotifyPlayer) return;
+
+  spotifyPlayer = new Spotify.Player({
+    name: 'Som da Academia',
+    getOAuthToken: async (callback) => {
+      const res = await fetch('/api/spotify/token');
+      const data = await res.json();
+      callback(data.accessToken);
+    },
+    volume: 0.8,
+  });
+
+  spotifyPlayer.addListener('ready', ({ device_id }) => {
+    spotifyDeviceId = device_id;
+    spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>player pronto ✓</strong>';
+    loadQueue(); // re-renderiza pra habilitar os botões "Tocar"
+  });
+
+  spotifyPlayer.addListener('not_ready', () => {
+    spotifyDeviceId = null;
+    spotifyStatusEl.textContent = 'Player do Spotify desconectado.';
+  });
+
+  spotifyPlayer.addListener('authentication_error', ({ message }) => {
+    spotifyStatusEl.textContent = 'Erro de autenticação com o Spotify. Tente reconectar.';
+    spotifyConnectBtn.hidden = false;
+  });
+
+  spotifyPlayer.addListener('account_error', () => {
+    spotifyStatusEl.innerHTML = '<strong>Essa conta do Spotify não é Premium</strong> — o player de verdade exige Premium na conta conectada.';
+  });
+
+  spotifyPlayer.addListener('initialization_error', ({ message }) => {
+    spotifyStatusEl.textContent = 'Não foi possível iniciar o player neste navegador: ' + message;
+  });
+
+  spotifyPlayer.connect();
+}
+
 async function checkSpotifyStatus() {
   try {
     const res = await fetch('/api/spotify/status');
     const data = await res.json();
     if (data.connected) {
+      spotifyConnected = true;
       spotifyConnectBtn.hidden = true;
       if (!spotifyPlayer) {
         spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
-        initSpotifyPlayer();
+        maybeStartPlayer();
       }
     } else {
       spotifyStatusEl.textContent = 'Spotify ainda não conectado.';
@@ -321,43 +374,6 @@ async function checkSpotifyStatus() {
     }
   } catch {
     spotifyStatusEl.textContent = 'Não foi possível verificar a conexão com o Spotify.';
-  }
-}
-
-function initSpotifyPlayer() {
-  window.onSpotifyWebPlaybackSDKReady = () => {
-    spotifyPlayer = new Spotify.Player({
-      name: 'Som da Academia',
-      getOAuthToken: async (callback) => {
-        const res = await fetch('/api/spotify/token');
-        const data = await res.json();
-        callback(data.accessToken);
-      },
-      volume: 0.8,
-    });
-
-    spotifyPlayer.addListener('ready', ({ device_id }) => {
-      spotifyDeviceId = device_id;
-      spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>player pronto ✓</strong>';
-      loadQueue(); // re-renderiza pra habilitar os botões "Tocar"
-    });
-
-    spotifyPlayer.addListener('not_ready', () => {
-      spotifyDeviceId = null;
-      spotifyStatusEl.textContent = 'Player do Spotify desconectado.';
-    });
-
-    spotifyPlayer.addListener('authentication_error', () => {
-      spotifyStatusEl.textContent = 'Erro de autenticação com o Spotify. Tente reconectar.';
-      spotifyConnectBtn.hidden = false;
-    });
-
-    spotifyPlayer.connect();
-  };
-
-  // Se o SDK já carregou antes desse ponto (cache do navegador), chama na hora.
-  if (window.Spotify) {
-    window.onSpotifyWebPlaybackSDKReady();
   }
 }
 
