@@ -6,6 +6,9 @@ const qrImg = document.getElementById('qr-img');
 const addContextSelect = document.getElementById('add-context-select');
 const addSearchInput = document.getElementById('add-search-input');
 const addResultsEl = document.getElementById('add-results');
+const importContextSelect = document.getElementById('import-context-select');
+const importPlaylistInput = document.getElementById('import-playlist-input');
+const importPlaylistBtn = document.getElementById('import-playlist-btn');
 const spotifyStatusEl = document.getElementById('spotify-status');
 const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
 const spotifyDisconnectBtn = document.getElementById('spotify-disconnect-btn');
@@ -117,6 +120,10 @@ function renderAddContextSelect(contexts, activeContext) {
   } else if (activeContext) {
     addContextSelect.value = String(activeContext.id);
   }
+
+  // Clona o select para o import
+  importContextSelect.innerHTML = addContextSelect.innerHTML;
+  importContextSelect.value = addContextSelect.value;
 }
 
 function renderContextEditor(contexts) {
@@ -331,6 +338,44 @@ addResultsEl.addEventListener('click', async (e) => {
   } catch {
     btn.disabled = false;
     btn.textContent = '+ Adicionar';
+  }
+});
+
+// --- Importar Playlist Inteira ---
+
+importPlaylistBtn.addEventListener('click', async () => {
+  const url = importPlaylistInput.value.trim();
+  const contextId = Number(importContextSelect.value);
+
+  if (!url) return alert('Cole o link da playlist do Spotify primeiro.');
+  
+  // Extrai o ID da playlist: aceita formato URL padrão do Spotify
+  const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
+  if (!match) return alert('Link inválido. Copie o link direto do Spotify.');
+  const playlistId = match[1];
+
+  importPlaylistBtn.disabled = true;
+  importPlaylistBtn.textContent = 'Importando...';
+
+  try {
+    const res = await fetch('/api/spotify/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contextId, playlistId }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      alert(`Sucesso! ${data.importedCount} músicas foram adicionadas à fila.`);
+      importPlaylistInput.value = '';
+      loadQueue();
+    } else {
+      alert(data.erro || 'Falha ao importar playlist.');
+    }
+  } catch {
+    alert('Erro de conexão.');
+  } finally {
+    importPlaylistBtn.disabled = false;
+    importPlaylistBtn.textContent = 'Importar Músicas';
   }
 });
 

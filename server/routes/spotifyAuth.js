@@ -204,4 +204,58 @@ router.post('/playlist', async (req, res, next) => {
   }
 });
 
+// POST /api/spotify/import -> importa uma playlist inteira para a fila
+router.post('/import', async (req, res, next) => {
+  try {
+    const { contextId, playlistId } = req.body;
+    if (!contextId || !playlistId) return res.status(400).json({ erro: 'contextId e playlistId são obrigatórios.' });
+
+    const token = await getValidAccessToken();
+    if (!token) return res.status(409).json({ erro: 'Conecte o Spotify primeiro para importar playlists.' });
+
+    let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+    let tracks = [];
+
+    // Paginação para buscar todas as músicas da playlist
+    while (url) {
+      const pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!pRes.ok) {
+        const text = await pRes.text();
+        return res.status(502).json({ erro: `Falha ao buscar playlist: ${text}` });
+      }
+      const data = await pRes.json();
+      tracks.push(...data.items.map(i => i.track).filter(Boolean));
+      url = data.next;
+    }
+
+    if (tracks.length === 0) {
+      return res.status(400).json({ erro: 'A playlist está vazia ou não foi encontrada.' });
+    }
+
+    const agora = Date.now();
+    let importedCount = 0;
+
+    for (const track of tracks) {
+      if (!track.id || track.is_local) continue; // Ignora arquivos locais
+      
+      const nome = track.name;
+      const artista = track.artists?.map(a => a.name).join(', ') || 'Desconhecido';
+      const capaUrl = track.album?.images?.[0]?.url || null;
+      const duracaoMs = track.duration_ms || null;
+
+      await query(
+        `INSERT INTO queue_items
+          (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
+        [contextId, track.id, nome, artista, capaUrl, duracaoMs, agora]
+      );
+      importedCount++;
+    }
+
+    res.json({ ok: true, importedCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
