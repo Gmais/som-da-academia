@@ -170,4 +170,5 @@ module.exports = {
   getValidAccessToken,
   isConnected,
   resolveTrackUri,
+  getAppAccessToken,
 };

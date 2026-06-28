@@ -210,7 +210,8 @@ router.post('/import', async (req, res, next) => {
     const { contextId, playlistId } = req.body;
     if (!contextId || !playlistId) return res.status(400).json({ erro: 'contextId e playlistId são obrigatórios.' });
 
-    const token = await getValidAccessToken();
+    const { getAppAccessToken } = require('../spotifyAuth');
+    let token = await getValidAccessToken();
     if (!token) return res.status(409).json({ erro: 'Conecte o Spotify primeiro para importar playlists.' });
 
     let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
@@ -218,7 +219,14 @@ router.post('/import', async (req, res, next) => {
 
     // Paginação para buscar todas as músicas da playlist
     while (url) {
-      const pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      let pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      
+      // Fallback para App Token se a playlist for pública mas de um usuário não-cadastrado no Dev Mode
+      if (pRes.status === 403) {
+        token = await getAppAccessToken();
+        pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      }
+
       if (!pRes.ok) {
         const text = await pRes.text();
         return res.status(502).json({ erro: `Falha ao buscar playlist: ${text}` });
