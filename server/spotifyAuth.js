@@ -6,6 +6,7 @@ const SCOPES = [
   'user-read-private',
   'user-read-playback-state',
   'user-modify-playback-state',
+  'playlist-modify-public'
 ].join(' ');
 
 function getRedirectUri() {

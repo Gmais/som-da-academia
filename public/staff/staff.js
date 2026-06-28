@@ -90,6 +90,7 @@ function render(data) {
               <span class="strip__time">${ctx.hora_inicio}–${ctx.hora_fim}</span>
               <span class="level">${levelDots(ctx.naFila)}</span>
               <span class="strip__count">${ctx.naFila} na fila</span>
+              <button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" title="Transforma a fila desse contexto em uma playlist no Spotify">Criar Playlist</button>
             </span>
           </div>
           ${body}
@@ -144,6 +145,35 @@ strips.addEventListener('click', async (e) => {
     const id = Number(toggle.dataset.toggle);
     viewingContextId = viewingContextId === id ? null : id;
     loadQueue();
+    return;
+  }
+
+  const createPlaylistBtn = e.target.closest('[data-create-playlist]');
+  if (createPlaylistBtn) {
+    const contextId = Number(createPlaylistBtn.dataset.createPlaylist);
+    const originalText = createPlaylistBtn.textContent;
+    createPlaylistBtn.disabled = true;
+    createPlaylistBtn.textContent = 'Criando...';
+    try {
+      const res = await fetch('/api/spotify/playlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contextId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.open(data.url, '_blank');
+        createPlaylistBtn.textContent = 'Playlist Criada ✓';
+      } else {
+        alert(data.erro || 'Não foi possível criar a playlist.');
+        createPlaylistBtn.disabled = false;
+        createPlaylistBtn.textContent = originalText;
+      }
+    } catch {
+      alert('Erro de rede ao tentar criar a playlist.');
+      createPlaylistBtn.disabled = false;
+      createPlaylistBtn.textContent = originalText;
+    }
     return;
   }
 

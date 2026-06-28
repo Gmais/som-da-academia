@@ -128,4 +128,80 @@ router.post('/pause', async (req, res, next) => {
   }
 });
 
+// POST /api/spotify/playlist -> cria uma playlist no Spotify com a fila de um contexto
+router.post('/playlist', async (req, res, next) => {
+  try {
+    const { contextId } = req.body;
+    if (!contextId) return res.status(400).json({ erro: 'contextId é obrigatório.' });
+
+    const token = await getValidAccessToken();
+    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
+
+    // 1. Obter perfil do usuário (para pegar o ID)
+    const meRes = await fetch('https://api.spotify.com/v1/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!meRes.ok) return res.status(502).json({ erro: 'Falha ao obter perfil do Spotify.' });
+    const meData = await meRes.json();
+    const userId = meData.id;
+
+    // 2. Obter nome do contexto
+    const { rows: ctxRows } = await query('SELECT nome FROM contexts WHERE id = $1', [contextId]);
+    if (!ctxRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
+    const ctxName = ctxRows[0].nome;
+
+    // 3. Obter as músicas da fila (pendente, tocando, tocada)
+    const { rows: tracks } = await query(
+      `SELECT track_id FROM queue_items
+       WHERE context_id = $1 AND status IN ('pendente', 'tocando', 'tocada')
+       ORDER BY (status = 'tocando') DESC, criado_em ASC`,
+      [contextId]
+    );
+
+    if (tracks.length === 0) {
+      return res.status(400).json({ erro: 'Não há músicas na fila desse contexto para criar uma playlist.' });
+    }
+
+    const uris = tracks.map((t) => `spotify:track:${t.track_id}`);
+
+    // 4. Criar a playlist
+    const createRes = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: `Academia: ${ctxName}`,
+        description: `Playlist gerada automaticamente pelo Som da Academia em ${new Date().toLocaleDateString('pt-BR')}`,
+        public: true,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const text = await createRes.text();
+      return res.status(502).json({ erro: `Falha ao criar playlist: ${text}` });
+    }
+    const playlistData = await createRes.json();
+    const playlistId = playlistData.id;
+
+    // 5. Adicionar músicas à playlist (lotes de 100)
+    for (let i = 0; i < uris.length; i += 100) {
+      const chunk = uris.slice(i, i + 100);
+      await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ uris: chunk }),
+      });
+    }
+
+    res.json({ ok: true, url: playlistData.external_urls.spotify });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
