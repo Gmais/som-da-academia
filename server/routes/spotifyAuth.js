@@ -204,6 +204,37 @@ router.post('/playlist', async (req, res, next) => {
   }
 });
 
+// GET /api/spotify/my-playlists -> lista as playlists do usuário conectado
+router.get('/my-playlists', async (req, res, next) => {
+  try {
+    const token = await getValidAccessToken();
+    if (!token) return res.status(409).json({ erro: 'Spotify não conectado. Conecte sua conta primeiro.' });
+
+    let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
+    let playlists = [];
+
+    while (url) {
+      const pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!pRes.ok) {
+        const text = await pRes.text();
+        return res.status(502).json({ erro: `Falha ao buscar playlists: ${text}` });
+      }
+      const data = await pRes.json();
+      playlists.push(...data.items.filter(Boolean).map(pl => ({
+        id: pl.id,
+        nome: pl.name,
+        total: pl.tracks?.total || 0,
+        capa: pl.images?.[0]?.url || null,
+      })));
+      url = data.next;
+    }
+
+    res.json({ ok: true, playlists });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/spotify/import -> importa uma playlist inteira para a fila
 router.post('/import', async (req, res, next) => {
   try {

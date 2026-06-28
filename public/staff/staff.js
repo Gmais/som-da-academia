@@ -7,8 +7,11 @@ const addContextSelect = document.getElementById('add-context-select');
 const addSearchInput = document.getElementById('add-search-input');
 const addResultsEl = document.getElementById('add-results');
 const importContextSelect = document.getElementById('import-context-select');
-const importPlaylistInput = document.getElementById('import-playlist-input');
-const importPlaylistBtn = document.getElementById('import-playlist-btn');
+const choosePlaylistBtn = document.getElementById('choose-playlist-btn');
+const choosePlaylistStatus = document.getElementById('choose-playlist-status');
+const playlistModal = document.getElementById('playlist-modal');
+const playlistModalList = document.getElementById('playlist-modal-list');
+const playlistModalClose = document.getElementById('playlist-modal-close');
 const spotifyStatusEl = document.getElementById('spotify-status');
 const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
 const spotifyDisconnectBtn = document.getElementById('spotify-disconnect-btn');
@@ -341,43 +344,99 @@ addResultsEl.addEventListener('click', async (e) => {
   }
 });
 
-// --- Importar Playlist Inteira ---
+// --- Escolher Playlist do Spotify ---
 
-importPlaylistBtn.addEventListener('click', async () => {
-  const url = importPlaylistInput.value.trim();
+function closePlaylistModal() {
+  playlistModal.hidden = true;
+}
+
+playlistModalClose.addEventListener('click', closePlaylistModal);
+playlistModal.querySelector('.pl-modal__backdrop').addEventListener('click', closePlaylistModal);
+
+choosePlaylistBtn.addEventListener('click', async () => {
   const contextId = Number(importContextSelect.value);
+  if (!contextId) return alert('Selecione um contexto primeiro.');
 
-  if (!url) return alert('Cole o link da playlist do Spotify primeiro.');
-  
-  // Extrai o ID da playlist: aceita formato URL padrão do Spotify
-  const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
-  if (!match) return alert('Link inválido. Copie o link direto do Spotify.');
-  const playlistId = match[1];
-
-  importPlaylistBtn.disabled = true;
-  importPlaylistBtn.textContent = 'Importando...';
+  choosePlaylistBtn.disabled = true;
+  choosePlaylistBtn.textContent = 'Carregando...';
+  choosePlaylistStatus.textContent = '';
 
   try {
-    const res = await fetch('/api/spotify/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contextId, playlistId }),
-    });
+    const res = await fetch('/api/spotify/my-playlists');
     const data = await res.json();
-    if (res.ok) {
-      alert(`Sucesso! ${data.importedCount} músicas foram adicionadas à fila.`);
-      importPlaylistInput.value = '';
-      loadQueue();
-    } else {
-      alert(data.erro || 'Falha ao importar playlist.');
+
+    if (!res.ok) {
+      choosePlaylistStatus.textContent = data.erro || 'Erro ao buscar playlists.';
+      return;
     }
+
+    const playlists = data.playlists;
+    if (!playlists.length) {
+      choosePlaylistStatus.textContent = 'Nenhuma playlist encontrada na sua conta.';
+      return;
+    }
+
+    // Popula o modal
+    playlistModalList.innerHTML = playlists.map(pl => `
+      <div class="pl-item">
+        <img src="${pl.capa || ''}" alt="" onerror="this.style.visibility='hidden'" />
+        <div class="pl-item__info">
+          <div class="pl-item__name">${pl.nome}</div>
+          <div class="pl-item__count">${pl.total} músicas</div>
+        </div>
+        <button class="pl-item__add"
+          data-pl-id="${pl.id}"
+          data-pl-nome="${encodeURIComponent(pl.nome)}"
+          data-ctx-id="${contextId}">
+          Importar
+        </button>
+      </div>
+    `).join('');
+
+    // Listener nos botões de importar dentro do modal
+    playlistModalList.querySelectorAll('.pl-item__add').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const playlistId = btn.dataset.plId;
+        const ctxId = Number(btn.dataset.ctxId);
+        const nome = decodeURIComponent(btn.dataset.plNome);
+        btn.disabled = true;
+        btn.textContent = 'Importando...';
+
+        try {
+          const r = await fetch('/api/spotify/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contextId: ctxId, playlistId }),
+          });
+          const d = await r.json();
+          if (r.ok) {
+            btn.textContent = `✓ ${d.importedCount} adicionadas`;
+            choosePlaylistStatus.textContent = `✅ ${d.importedCount} músicas de "${nome}" importadas!`;
+            closePlaylistModal();
+            loadQueue();
+          } else {
+            btn.disabled = false;
+            btn.textContent = 'Importar';
+            alert(d.erro || 'Falha ao importar.');
+          }
+        } catch {
+          btn.disabled = false;
+          btn.textContent = 'Importar';
+          alert('Erro de conexão.');
+        }
+      });
+    });
+
+    playlistModal.hidden = false;
+
   } catch {
-    alert('Erro de conexão.');
+    choosePlaylistStatus.textContent = 'Erro de conexão.';
   } finally {
-    importPlaylistBtn.disabled = false;
-    importPlaylistBtn.textContent = 'Importar Músicas';
+    choosePlaylistBtn.disabled = false;
+    choosePlaylistBtn.textContent = '🎵 Ver Minhas Playlists';
   }
 });
+
 
 // --- Conexão e player de verdade do Spotify ---
 

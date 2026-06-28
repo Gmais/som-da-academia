@@ -47,11 +47,11 @@
       </div>
 
       <div class="card">
-        <h2>Importar Playlist Base</h2>
-        <p class="muted">Cole o link de uma playlist do Spotify para encher a fila do contexto de uma vez.</p>
+        <h2>Escolher Playlist</h2>
+        <p class="muted">Selecione uma das suas playlists do Spotify para adicionar as músicas à fila da academia.</p>
         <select id="import-context-select"></select>
-        <input id="import-playlist-input" type="url" placeholder="https://open.spotify.com/playlist/..." autocomplete="off" />
-        <button id="import-playlist-btn" class="btn btn--primary" style="margin-top: 8px; width: 100%">Importar Músicas</button>
+        <button id="choose-playlist-btn" class="btn btn--primary" style="margin-top: 8px; width: 100%">🎵 Ver Minhas Playlists</button>
+        <p id="choose-playlist-status" class="muted" style="margin-top: 6px; font-size: 12px"></p>
       </div>
 
       <div class="card">
@@ -74,5 +74,18 @@
 
   <script src="https://sdk.scdn.co/spotify-player.js"></script>
   <script src="/staff/staff.js"></script>
+
+  <!-- Modal de seleção de playlists -->
+  <div id="playlist-modal" class="pl-modal" hidden>
+    <div class="pl-modal__backdrop"></div>
+    <div class="pl-modal__box">
+      <div class="pl-modal__header">
+        <h2>Suas Playlists</h2>
+        <button class="pl-modal__close" id="playlist-modal-close">✕</button>
+      </div>
+      <div id="playlist-modal-list" class="pl-modal__list"></div>
+    </div>
+  </div>
+
 </body>
 </html>
