@@ -20,6 +20,7 @@ function getAuthorizeUrl(state) {
   url.searchParams.set('redirect_uri', getRedirectUri());
   url.searchParams.set('scope', SCOPES);
   url.searchParams.set('state', state);
+  url.searchParams.set('show_dialog', 'true'); // Força a tela de login para trocar de conta
   return url.toString();
 }
 

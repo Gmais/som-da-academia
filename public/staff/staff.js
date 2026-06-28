@@ -8,6 +8,7 @@ const addSearchInput = document.getElementById('add-search-input');
 const addResultsEl = document.getElementById('add-results');
 const spotifyStatusEl = document.getElementById('spotify-status');
 const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
+const spotifyDisconnectBtn = document.getElementById('spotify-disconnect-btn');
 const spotifyPauseBtn = document.getElementById('spotify-pause-btn');
 
 let spotifyDeviceId = null;
@@ -364,6 +365,7 @@ async function checkSpotifyStatus() {
     if (data.connected) {
       spotifyConnected = true;
       spotifyConnectBtn.hidden = true;
+      spotifyDisconnectBtn.hidden = false;
       if (!spotifyPlayer) {
         spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
         maybeStartPlayer();
@@ -371,6 +373,7 @@ async function checkSpotifyStatus() {
     } else {
       spotifyStatusEl.textContent = 'Spotify ainda não conectado.';
       spotifyConnectBtn.hidden = false;
+      spotifyDisconnectBtn.hidden = true;
     }
   } catch {
     spotifyStatusEl.textContent = 'Não foi possível verificar a conexão com o Spotify.';

@@ -26,6 +26,16 @@ router.get('/login', (req, res) => {
   res.redirect(getAuthorizeUrl(state));
 });
 
+// GET /api/spotify/logout -> remove a conta conectada
+router.get('/logout', async (req, res, next) => {
+  try {
+    await query('DELETE FROM spotify_auth WHERE id = 1');
+    res.redirect('/staff');
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/spotify/callback -> o Spotify volta pra cá depois do login
 router.get('/callback', async (req, res, next) => {
   try {
