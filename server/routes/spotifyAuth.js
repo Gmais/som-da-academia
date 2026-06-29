@@ -302,11 +302,7 @@ router.post('/mass-import-text', async (req, res, next) => {
       return res.status(400).json({ erro: 'contextId e array de queries são obrigatórios.' });
     }
 
-    const { getAppAccessToken } = require('../spotifyAuth');
-    let token = await getValidAccessToken();
-    // Fallback pra app token se o usuário não estiver logado ou algo assim, 
-    // já que o endpoint de busca funciona bem com app token
-    if (!token) token = await getAppAccessToken();
+    const { searchTracks } = require('../catalog');
 
     let importedCount = 0;
     const agora = Date.now();
@@ -314,30 +310,21 @@ router.post('/mass-import-text', async (req, res, next) => {
     for (const q of queries) {
       if (!q) continue;
 
-      const url = new URL('https://api.spotify.com/v1/search');
-      url.searchParams.set('q', q);
-      url.searchParams.set('type', 'track');
-      url.searchParams.set('limit', '1');
-
-      const sRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!sRes.ok) continue; // ignora erros individuais pra não parar a importação inteira
-
-      const data = await sRes.json();
-      const track = data.tracks?.items?.[0];
-      
-      if (track && !track.is_local) {
-        const nome = track.name;
-        const artista = track.artists?.map(a => a.name).join(', ') || 'Desconhecido';
-        const capaUrl = track.album?.images?.[0]?.url || null;
-        const duracaoMs = track.duration_ms || null;
-
-        await query(
-          `INSERT INTO queue_items
-            (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
-           VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
-          [contextId, track.id, nome, artista, capaUrl, duracaoMs, agora]
-        );
-        importedCount++;
+      try {
+        const resultados = await searchTracks(q, 1);
+        if (resultados && resultados.length > 0) {
+          const track = resultados[0];
+          
+          await query(
+            `INSERT INTO queue_items
+              (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
+            [contextId, track.trackId, track.nome, track.artista, track.capaUrl, track.duracaoMs, agora]
+          );
+          importedCount++;
+        }
+      } catch (err) {
+        // ignora erros individuais pra não parar a importação inteira
       }
     }
 
