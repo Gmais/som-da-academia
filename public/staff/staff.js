@@ -250,13 +250,6 @@ strips.addEventListener('click', async (e) => {
     return;
   }
 
-  const randomToggle = e.target.closest('.random-checkbox');
-  if (randomToggle) {
-    const contextId = randomToggle.dataset.randomContext;
-    randomModes[contextId] = randomToggle.checked;
-    localStorage.setItem('sda_random_modes', JSON.stringify(randomModes));
-    return;
-  }
 
   const actionBtn = e.target.closest('[data-action]');
   if (actionBtn) {
@@ -268,6 +261,14 @@ strips.addEventListener('click', async (e) => {
       body: JSON.stringify({ status }),
     });
     loadQueue();
+  }
+});
+
+strips.addEventListener('change', (e) => {
+  if (e.target.classList.contains('random-checkbox')) {
+    const contextId = e.target.dataset.randomContext;
+    randomModes[contextId] = e.target.checked;
+    localStorage.setItem('sda_random_modes', JSON.stringify(randomModes));
   }
 });
 
