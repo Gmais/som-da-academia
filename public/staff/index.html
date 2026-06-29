@@ -47,11 +47,12 @@
       </div>
 
       <div class="card">
-        <h2>Escolher Playlist</h2>
-        <p class="muted">Selecione uma das suas playlists do Spotify para adicionar as músicas à fila da academia.</p>
+        <h2>Importação em Massa</h2>
+        <p class="muted">Cole uma lista de músicas (ex: uma por linha do TuneMyMusic) para o sistema buscar e adicionar todas automaticamente.</p>
         <select id="import-context-select"></select>
-        <button id="choose-playlist-btn" class="btn btn--primary" style="margin-top: 8px; width: 100%">🎵 Ver Minhas Playlists</button>
-        <p id="choose-playlist-status" class="muted" style="margin-top: 6px; font-size: 12px"></p>
+        <textarea id="import-text-area" placeholder="Ex:&#10;Anitta - Envolver&#10;Coldplay - Yellow" rows="4" style="width:100%; margin-top:8px; border-radius:6px; border:1px solid var(--paper-dim); padding:8px; font-family:var(--font-body); font-size:13px;"></textarea>
+        <button id="import-text-btn" class="btn btn--primary" style="margin-top: 8px; width: 100%">Importar Lista</button>
+        <p id="import-text-status" class="muted" style="margin-top: 6px; font-size: 12px"></p>
       </div>
 
       <div class="card">

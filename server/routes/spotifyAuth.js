@@ -235,60 +235,51 @@ router.get('/my-playlists', async (req, res, next) => {
   }
 });
 
-// POST /api/spotify/import -> importa uma playlist inteira para a fila
-router.post('/import', async (req, res, next) => {
+// POST /api/spotify/mass-import-text -> pesquisa várias músicas por texto e adiciona
+router.post('/mass-import-text', async (req, res, next) => {
   try {
-    const { contextId, playlistId } = req.body;
-    if (!contextId || !playlistId) return res.status(400).json({ erro: 'contextId e playlistId são obrigatórios.' });
+    const { contextId, queries } = req.body;
+    if (!contextId || !Array.isArray(queries) || queries.length === 0) {
+      return res.status(400).json({ erro: 'contextId e array de queries são obrigatórios.' });
+    }
 
     const { getAppAccessToken } = require('../spotifyAuth');
     let token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Conecte o Spotify primeiro para importar playlists.' });
+    // Fallback pra app token se o usuário não estiver logado ou algo assim, 
+    // já que o endpoint de busca funciona bem com app token
+    if (!token) token = await getAppAccessToken();
 
-    let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
-    let tracks = [];
-
-    // Paginação para buscar todas as músicas da playlist
-    while (url) {
-      let pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      
-      // Fallback para App Token se a playlist for pública mas de um usuário não-cadastrado no Dev Mode
-      if (pRes.status === 403) {
-        token = await getAppAccessToken();
-        pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      }
-
-      if (!pRes.ok) {
-        const text = await pRes.text();
-        return res.status(502).json({ erro: `Falha ao buscar playlist: ${text}` });
-      }
-      const data = await pRes.json();
-      tracks.push(...data.items.map(i => i.track).filter(Boolean));
-      url = data.next;
-    }
-
-    if (tracks.length === 0) {
-      return res.status(400).json({ erro: 'A playlist está vazia ou não foi encontrada.' });
-    }
-
-    const agora = Date.now();
     let importedCount = 0;
+    const agora = Date.now();
 
-    for (const track of tracks) {
-      if (!track.id || track.is_local) continue; // Ignora arquivos locais
+    for (const q of queries) {
+      if (!q) continue;
+
+      const url = new URL('https://api.spotify.com/v1/search');
+      url.searchParams.set('q', q);
+      url.searchParams.set('type', 'track');
+      url.searchParams.set('limit', '1');
+
+      const sRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!sRes.ok) continue; // ignora erros individuais pra não parar a importação inteira
+
+      const data = await sRes.json();
+      const track = data.tracks?.items?.[0];
       
-      const nome = track.name;
-      const artista = track.artists?.map(a => a.name).join(', ') || 'Desconhecido';
-      const capaUrl = track.album?.images?.[0]?.url || null;
-      const duracaoMs = track.duration_ms || null;
+      if (track && !track.is_local) {
+        const nome = track.name;
+        const artista = track.artists?.map(a => a.name).join(', ') || 'Desconhecido';
+        const capaUrl = track.album?.images?.[0]?.url || null;
+        const duracaoMs = track.duration_ms || null;
 
-      await query(
-        `INSERT INTO queue_items
-          (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
-        [contextId, track.id, nome, artista, capaUrl, duracaoMs, agora]
-      );
-      importedCount++;
+        await query(
+          `INSERT INTO queue_items
+            (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
+          [contextId, track.id, nome, artista, capaUrl, duracaoMs, agora]
+        );
+        importedCount++;
+      }
     }
 
     res.json({ ok: true, importedCount });
