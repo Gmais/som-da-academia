@@ -1,7 +1,7 @@
 const express = require('express');
 const { nanoid } = require('nanoid');
 const { query } = require('../db');
-const { getActiveContext } = require('../contextHelper');
+const { getActiveContextRow } = require('../contextHelper');
 
 const router = express.Router();
 
@@ -23,16 +23,11 @@ function getOrCreateToken(req, res) {
   return token;
 }
 
-async function getActiveContextRow() {
-  const { rows: contexts } = await query('SELECT * FROM contexts ORDER BY ordem ASC');
-  return getActiveContext(contexts);
-}
-
 // GET /api/queue?contextId=N -> fila do contexto pedido (ou do ativo, por padrão) + contagem dos outros
 router.get('/', async (req, res, next) => {
   try {
     const { rows: contexts } = await query('SELECT * FROM contexts ORDER BY ordem ASC');
-    const active = getActiveContext(contexts);
+    const active = await getActiveContextRow();
 
     const requestedId = req.query.contextId ? Number(req.query.contextId) : active?.id;
 

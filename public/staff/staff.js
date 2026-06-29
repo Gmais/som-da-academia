@@ -89,9 +89,8 @@ function render(data) {
       return `
         <div class="strip ${isActiveContext ? 'strip--active' : ''}" style="--strip-color:${ctx.cor}" data-context-id="${ctx.id}">
           <div class="strip__header" data-toggle="${ctx.id}">
-            <span class="strip__name">${escapeHtml(ctx.nome)} ${isActiveContext ? '· ativo agora' : ''}</span>
+            <span class="strip__name">${escapeHtml(ctx.nome)}</span>
             <span class="strip__meta">
-              <span class="strip__time">${ctx.hora_inicio}–${ctx.hora_fim}</span>
               <span class="level">${levelDots(ctx.naFila)}</span>
               <span class="strip__count">${ctx.naFila} na fila</span>
               <button class="btn btn--ghost" style="margin-left: 8px" data-shuffle-context="${ctx.id}" title="Embaralha aleatoriamente as músicas pendentes deste contexto">🔀 Embaralhar</button>
@@ -134,8 +133,6 @@ function renderContextEditor(contexts) {
       (ctx) => `
       <div class="ctx-edit-row" data-ctx-id="${ctx.id}" style="display:flex; gap:4px; align-items:center;">
         <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" style="flex:1" />
-        <input type="time" value="${ctx.hora_inicio}" data-field="hora_inicio" />
-        <input type="time" value="${ctx.hora_fim}" data-field="hora_fim" />
         <button class="btn btn--danger" data-delete-context="${ctx.id}" title="Excluir contexto" style="padding: 4px 8px; margin: 0;">✕</button>
       </div>`
     )
@@ -309,9 +306,7 @@ document.getElementById('add-context-btn')?.addEventListener('click', async (e) 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        nome: 'Novo Horário',
-        hora_inicio: '12:00',
-        hora_fim: '18:00',
+        nome: 'Nova Categoria',
         cor: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0') // cor aleatoria
       }),
     });

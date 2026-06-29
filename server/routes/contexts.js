@@ -1,13 +1,13 @@
 const express = require('express');
 const { query } = require('../db');
-const { getActiveContext } = require('../contextHelper');
+const { getActiveContextRow } = require('../contextHelper');
 
 const router = express.Router();
 
 router.get('/', async (req, res, next) => {
   try {
     const { rows: contexts } = await query('SELECT * FROM contexts ORDER BY ordem ASC');
-    const active = getActiveContext(contexts);
+    const active = await getActiveContextRow();
     res.json({
       contexts,
       activeContextId: active ? active.id : null,
@@ -20,19 +20,14 @@ router.get('/', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { nome, hora_inicio, hora_fim, cor } = req.body;
+    const { nome, cor } = req.body;
 
     const { rows: existingRows } = await query('SELECT * FROM contexts WHERE id = $1', [id]);
     if (!existingRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
 
     await query(
-      `UPDATE contexts SET
-        nome = COALESCE($1, nome),
-        hora_inicio = COALESCE($2, hora_inicio),
-        hora_fim = COALESCE($3, hora_fim),
-        cor = COALESCE($4, cor)
-       WHERE id = $5`,
-      [nome ?? null, hora_inicio ?? null, hora_fim ?? null, cor ?? null, id]
+      'UPDATE contexts SET nome = $1, cor = $2 WHERE id = $3',
+      [nome || existingRows[0].nome, cor || existingRows[0].cor, id]
     );
 
     const { rows: updatedRows } = await query('SELECT * FROM contexts WHERE id = $1', [id]);
@@ -44,9 +39,9 @@ router.patch('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { nome, hora_inicio, hora_fim, cor } = req.body;
-    if (!nome || !hora_inicio || !hora_fim) {
-      return res.status(400).json({ erro: 'Nome e horários são obrigatórios.' });
+    const { nome, cor } = req.body;
+    if (!nome) {
+      return res.status(400).json({ erro: 'Nome é obrigatório.' });
     }
     
     const { rows: maxRows } = await query('SELECT COALESCE(MAX(ordem), 0) as max_ordem FROM contexts');
@@ -55,7 +50,7 @@ router.post('/', async (req, res, next) => {
     const { rows: inserted } = await query(
       `INSERT INTO contexts (nome, hora_inicio, hora_fim, cor, ordem)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [nome, hora_inicio, hora_fim, cor || '#3E9B77', nextOrdem]
+      [nome, '00:00', '23:59', cor || '#3E9B77', nextOrdem]
     );
 
     res.status(201).json(inserted[0]);
