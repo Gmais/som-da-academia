@@ -37,13 +37,15 @@ function ensureSchema() {
           duracao_ms BIGINT,
           status TEXT NOT NULL DEFAULT 'pendente',
           criado_em BIGINT NOT NULL,
-          atualizado_em BIGINT NOT NULL
+          atualizado_em BIGINT NOT NULL,
+          matricula TEXT
         );
 
         CREATE TABLE IF NOT EXISTS suggestion_log (
           id SERIAL PRIMARY KEY,
           token TEXT NOT NULL,
-          criado_em BIGINT NOT NULL
+          criado_em BIGINT NOT NULL,
+          matricula TEXT
         );
 
         CREATE TABLE IF NOT EXISTS spotify_auth (
@@ -72,6 +74,18 @@ function ensureSchema() {
             WHERE table_name = 'queue_items' AND column_name = 'track_id'
           ) THEN
             ALTER TABLE queue_items RENAME COLUMN spotify_track_id TO track_id;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'queue_items' AND column_name = 'matricula'
+          ) THEN
+            ALTER TABLE queue_items ADD COLUMN matricula TEXT;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'suggestion_log' AND column_name = 'matricula'
+          ) THEN
+            ALTER TABLE suggestion_log ADD COLUMN matricula TEXT;
           END IF;
         END $$;
       `);

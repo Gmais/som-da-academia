@@ -89,10 +89,13 @@ router.post('/add', async (req, res, next) => {
 // POST /api/queue/suggestions -> aluno sugere uma música.
 router.post('/suggestions', async (req, res, next) => {
   try {
-    const { trackId, nome, artista, capaUrl, duracaoMs } = req.body;
+    const { trackId, nome, artista, capaUrl, duracaoMs, matricula } = req.body;
 
-    if (!trackId || !nome || !artista) {
-      return res.status(400).json({ erro: 'Música inválida.' });
+    if (!trackId || !nome || !artista || !matricula) {
+      return res.status(400).json({ erro: 'Dados incompletos. Matrícula é obrigatória.' });
+    }
+    if (!/^\d{4}$/.test(matricula)) {
+      return res.status(400).json({ erro: 'Matrícula inválida. Deve conter 4 números.' });
     }
 
     const active = await getActiveContextRow();
@@ -132,13 +135,13 @@ router.post('/suggestions', async (req, res, next) => {
 
     const { rows: insertedRows } = await query(
       `INSERT INTO queue_items
-        (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)
+        (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em, matricula)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7, $8)
        RETURNING id`,
-      [active.id, trackId, nome, artista, capaUrl || null, duracaoMs || null, agora]
+      [active.id, trackId, nome, artista, capaUrl || null, duracaoMs || null, agora, matricula]
     );
 
-    await query('INSERT INTO suggestion_log (token, criado_em) VALUES ($1, $2)', [token, agora]);
+    await query('INSERT INTO suggestion_log (token, criado_em, matricula) VALUES ($1, $2, $3)', [token, agora, matricula]);
 
     const { rows: posicaoRows } = await query(
       `SELECT COUNT(*) as n FROM queue_items

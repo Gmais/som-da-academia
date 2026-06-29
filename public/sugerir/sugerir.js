@@ -1,4 +1,5 @@
 const searchInput = document.getElementById('search-input');
+const matriculaInput = document.getElementById('matricula-input');
 const resultsEl = document.getElementById('results');
 const contextNameEl = document.getElementById('context-name');
 const toastEl = document.getElementById('toast');
@@ -92,6 +93,12 @@ resultsEl.addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-track-id]');
   if (!btn) return;
 
+  const matricula = matriculaInput.value.trim();
+  if (!/^\d{4}$/.test(matricula)) {
+    showToast('Digite sua matrícula com 4 números para sugerir.', 'erro');
+    return;
+  }
+
   btn.disabled = true;
   btn.textContent = 'Enviando…';
 
@@ -105,6 +112,7 @@ resultsEl.addEventListener('click', async (e) => {
         artista: btn.dataset.artista,
         capaUrl: btn.dataset.capa,
         duracaoMs: Number(btn.dataset.duracao) || null,
+        matricula: matricula,
       }),
     });
     const data = await res.json();
