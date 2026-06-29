@@ -59,6 +59,26 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+router.post('/reorder', async (req, res, next) => {
+  try {
+    const { order } = req.body;
+    if (!Array.isArray(order)) {
+      return res.status(400).json({ erro: 'O payload deve conter um array "order" de IDs.' });
+    }
+    
+    // Processar em uma transação para evitar inconsistências
+    const { query: dbQuery } = require('../db');
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i];
+      await dbQuery('UPDATE contexts SET ordem = $1 WHERE id = $2', [i, id]);
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;

@@ -141,6 +141,8 @@ function renderContextEditor(contexts) {
     .map(
       (ctx) => `
       <div class="ctx-edit-row" data-ctx-id="${ctx.id}" style="display:flex; gap:4px; align-items:center;">
+        <button class="btn btn--ghost" data-move-context="-1" title="Subir" style="padding: 4px; margin: 0; min-height: 0;">▲</button>
+        <button class="btn btn--ghost" data-move-context="1" title="Descer" style="padding: 4px; margin: 0; min-height: 0;">▼</button>
         <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" style="flex:1" />
         <button class="btn btn--danger" data-delete-context="${ctx.id}" title="Excluir contexto" style="padding: 4px 8px; margin: 0;">✕</button>
       </div>`
@@ -302,6 +304,38 @@ contextEditor.addEventListener('change', async (e) => {
 });
 
 contextEditor.addEventListener('click', async (e) => {
+  const moveBtn = e.target.closest('[data-move-context]');
+  if (moveBtn) {
+    const dir = parseInt(moveBtn.dataset.moveContext, 10);
+    const row = moveBtn.closest('.ctx-edit-row');
+    const allRows = Array.from(contextEditor.querySelectorAll('.ctx-edit-row'));
+    const index = allRows.indexOf(row);
+    if (index === -1) return;
+    
+    if (dir === -1 && index > 0) {
+      contextEditor.insertBefore(row, allRows[index - 1]);
+    } else if (dir === 1 && index < allRows.length - 1) {
+      contextEditor.insertBefore(row, allRows[index + 2] || null);
+    } else {
+      return;
+    }
+    
+    const newOrder = Array.from(contextEditor.querySelectorAll('.ctx-edit-row')).map(r => Number(r.dataset.ctxId));
+    
+    try {
+      await fetch('/api/contexts/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: newOrder })
+      });
+      // Apenas recarrega para sincronizar sem resetar o timer
+      loadQueue();
+    } catch {
+      alert('Erro ao reordenar.');
+    }
+    return;
+  }
+
   const deleteBtn = e.target.closest('[data-delete-context]');
   if (deleteBtn) {
     const id = deleteBtn.dataset.deleteContext;
