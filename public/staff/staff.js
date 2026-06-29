@@ -118,22 +118,29 @@ function render(data) {
 
 function renderAddContextSelect(contexts, activeContext) {
   knownContexts = contexts;
-  const previousValue = addContextSelect.value;
-  const hasPrevious = contexts.some((c) => String(c.id) === previousValue);
+  const previousAddValue = addContextSelect.value;
+  const previousImportValue = importContextSelect.value;
+  const hasPreviousAdd = contexts.some((c) => String(c.id) === previousAddValue);
+  const hasPreviousImport = contexts.some((c) => String(c.id) === previousImportValue);
 
   addContextSelect.innerHTML = contexts
     .map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)
     .join('');
 
-  if (hasPrevious) {
-    addContextSelect.value = previousValue;
+  if (hasPreviousAdd) {
+    addContextSelect.value = previousAddValue;
   } else if (activeContext) {
     addContextSelect.value = String(activeContext.id);
   }
 
   // Clona o select para o import
   importContextSelect.innerHTML = addContextSelect.innerHTML;
-  importContextSelect.value = addContextSelect.value;
+  
+  if (hasPreviousImport) {
+    importContextSelect.value = previousImportValue;
+  } else if (activeContext) {
+    importContextSelect.value = String(activeContext.id);
+  }
 }
 
 function renderContextEditor(contexts) {
