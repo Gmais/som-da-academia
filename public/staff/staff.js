@@ -132,10 +132,11 @@ function renderContextEditor(contexts) {
   contextEditor.innerHTML = contexts
     .map(
       (ctx) => `
-      <div class="ctx-edit-row" data-ctx-id="${ctx.id}">
-        <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" />
+      <div class="ctx-edit-row" data-ctx-id="${ctx.id}" style="display:flex; gap:4px; align-items:center;">
+        <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" style="flex:1" />
         <input type="time" value="${ctx.hora_inicio}" data-field="hora_inicio" />
         <input type="time" value="${ctx.hora_fim}" data-field="hora_fim" />
+        <button class="btn btn--danger" data-delete-context="${ctx.id}" title="Excluir contexto" style="padding: 4px 8px; margin: 0;">✕</button>
       </div>`
     )
     .join('');
@@ -275,6 +276,56 @@ contextEditor.addEventListener('change', async (e) => {
     body: JSON.stringify(payload),
   });
   loadQueue();
+});
+
+contextEditor.addEventListener('click', async (e) => {
+  const deleteBtn = e.target.closest('[data-delete-context]');
+  if (deleteBtn) {
+    const id = deleteBtn.dataset.deleteContext;
+    if (!confirm('Tem certeza que quer excluir este contexto? Todas as músicas na fila dele serão perdidas.')) return;
+    deleteBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/contexts/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (viewingContextId === Number(id)) viewingContextId = null;
+        loadQueue();
+      } else {
+        alert('Falha ao excluir.');
+        deleteBtn.disabled = false;
+      }
+    } catch {
+      alert('Erro ao excluir contexto.');
+      deleteBtn.disabled = false;
+    }
+  }
+});
+
+document.getElementById('add-context-btn')?.addEventListener('click', async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  btn.textContent = 'Adicionando...';
+  try {
+    const res = await fetch('/api/contexts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nome: 'Novo Horário',
+        hora_inicio: '12:00',
+        hora_fim: '18:00',
+        cor: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0') // cor aleatoria
+      }),
+    });
+    if (res.ok) {
+      loadQueue();
+    } else {
+      alert('Falha ao criar contexto.');
+    }
+  } catch {
+    alert('Erro de conexão.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '+ Novo Contexto';
+  }
 });
 
 function tickClock() {

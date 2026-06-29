@@ -42,6 +42,44 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+router.post('/', async (req, res, next) => {
+  try {
+    const { nome, hora_inicio, hora_fim, cor } = req.body;
+    if (!nome || !hora_inicio || !hora_fim) {
+      return res.status(400).json({ erro: 'Nome e horários são obrigatórios.' });
+    }
+    
+    const { rows: maxRows } = await query('SELECT COALESCE(MAX(ordem), 0) as max_ordem FROM contexts');
+    const nextOrdem = Number(maxRows[0].max_ordem) + 1;
+
+    const { rows: inserted } = await query(
+      `INSERT INTO contexts (nome, hora_inicio, hora_fim, cor, ordem)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [nome, hora_inicio, hora_fim, cor || '#3E9B77', nextOrdem]
+    );
+
+    res.status(201).json(inserted[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Deleta os itens da fila primeiro para evitar erro de Foreign Key
+    await query('DELETE FROM queue_items WHERE context_id = $1', [id]);
+    
+    const { rowCount } = await query('DELETE FROM contexts WHERE id = $1', [id]);
+    if (rowCount === 0) return res.status(404).json({ erro: 'Contexto não encontrado.' });
+    
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/:id/shuffle', async (req, res, next) => {
   try {
     const { id } = req.params;
