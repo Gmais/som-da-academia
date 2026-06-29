@@ -54,6 +54,9 @@ function renderTrackRow(item) {
         <div class="track-row__name">${escapeHtml(item.nome)}</div>
         <div class="track-row__artist">${escapeHtml(item.artista)}</div>
       </div>
+      <div class="track-progress">
+        <div class="track-progress__fill" id="progress-${item.id}"></div>
+      </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
         <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>▶ Tocar</button>
@@ -610,3 +613,19 @@ spotifyPauseBtn.addEventListener('click', async () => {
 
 checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
+
+// Loop para atualizar a barra de progresso da música tocando
+setInterval(async () => {
+  if (!spotifyPlayer) return;
+  const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
+  if (!tocandoRow) return;
+  const queueItemId = tocandoRow.dataset.id;
+  const fillEl = document.getElementById(`progress-${queueItemId}`);
+  if (!fillEl) return;
+  
+  const state = await spotifyPlayer.getCurrentState();
+  if (state && !state.paused && state.duration > 0) {
+    const pct = (state.position / state.duration) * 100;
+    fillEl.style.width = `${pct}%`;
+  }
+}, 1000);

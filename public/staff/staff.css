@@ -146,7 +146,7 @@ body {
 
 .track-row {
   display: grid;
-  grid-template-columns: 44px 1fr auto auto;
+  grid-template-columns: 44px 1fr 150px auto auto;
   align-items: center;
   gap: 12px;
   padding: 8px;
@@ -157,6 +157,23 @@ body {
 .track-row[data-status="tocando"] {
   background: rgba(245, 158, 11, 0.25); /* orange/amber soft but stronger */
   border-left: 4px solid var(--amber);
+}
+
+.track-progress {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  display: none;
+}
+.track-row[data-status="tocando"] .track-progress {
+  display: block;
+}
+.track-progress__fill {
+  height: 100%;
+  background: var(--amber);
+  width: 0%;
+  transition: width 1s linear;
 }
 
 .toggle-random {
