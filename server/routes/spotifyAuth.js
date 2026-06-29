@@ -73,7 +73,15 @@ router.post('/play', async (req, res, next) => {
     const item = rows[0];
     if (!item) return res.status(404).json({ erro: 'Item não encontrado.' });
 
-    const uri = await resolveTrackUri(item.nome, item.artista);
+    let uri;
+    // Se o track_id for um ID válido do Spotify (22 caracteres alfanuméricos), usamos direto.
+    // Isso evita o rate limit (429) na rota de busca.
+    if (item.track_id && item.track_id.length === 22 && /^[a-zA-Z0-9]+$/.test(item.track_id)) {
+      uri = `spotify:track:${item.track_id}`;
+    } else {
+      uri = await resolveTrackUri(item.nome, item.artista);
+    }
+    
     if (!uri) {
       return res.status(404).json({ erro: 'Não encontramos essa música no catálogo do Spotify.' });
     }
@@ -122,7 +130,13 @@ router.post('/play-next', async (req, res, next) => {
     const nextItem = rows[0];
 
     // Toca
-    const uri = await resolveTrackUri(nextItem.nome, nextItem.artista);
+    let uri;
+    if (nextItem.track_id && nextItem.track_id.length === 22 && /^[a-zA-Z0-9]+$/.test(nextItem.track_id)) {
+      uri = `spotify:track:${nextItem.track_id}`;
+    } else {
+      uri = await resolveTrackUri(nextItem.nome, nextItem.artista);
+    }
+    
     if (!uri) return res.status(404).json({ erro: 'Não achou URI' });
 
     const token = await getValidAccessToken();
