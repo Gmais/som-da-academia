@@ -228,6 +228,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.track-row__matricula {
+  display: inline-block;
+  background: var(--paper-dim);
+  color: var(--ink);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  margin-left: 6px;
+  vertical-align: text-bottom;
+}
+
 .track-row__duration {
   font-family: var(--font-mono);
   font-size: 12px;

@@ -54,7 +54,10 @@ function renderTrackRow(item) {
       <img class="track-row__cover" src="${item.capa_url || ''}" alt="" loading="lazy" />
       <div class="track-row__info">
         <div class="track-row__name">${escapeHtml(item.nome)}</div>
-        <div class="track-row__artist">${escapeHtml(item.artista)}</div>
+        <div class="track-row__artist">
+          ${escapeHtml(item.artista)}
+          ${item.matricula ? `<span class="track-row__matricula" title="Sugerido pelo aluno de matrícula ${escapeHtml(item.matricula)}">👤 ${escapeHtml(item.matricula)}</span>` : ''}
+        </div>
       </div>
       <div class="track-progress">
         <div class="track-progress__fill" id="progress-${item.id}" style="width: ${widthStr}; transition: ${isPlaying ? 'width 1s linear' : 'none'};"></div>
