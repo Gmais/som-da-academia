@@ -176,6 +176,14 @@ router.patch('/:id', async (req, res, next) => {
     const { rows: existingRows } = await query('SELECT * FROM queue_items WHERE id = $1', [id]);
     if (!existingRows[0]) return res.status(404).json({ erro: 'Item não encontrado.' });
 
+    if (status === 'tocando') {
+      // Quando marcar uma como tocando, marca qualquer outra 'tocando' do mesmo contexto como 'tocada'
+      await query(
+        "UPDATE queue_items SET status = 'tocada', atualizado_em = $1 WHERE context_id = $2 AND status = 'tocando' AND id != $3",
+        [Date.now(), existingRows[0].context_id, id]
+      );
+    }
+
     await query('UPDATE queue_items SET status = $1, atualizado_em = $2 WHERE id = $3', [
       status,
       Date.now(),
