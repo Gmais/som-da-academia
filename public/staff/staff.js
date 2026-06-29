@@ -59,7 +59,7 @@ function renderTrackRow(item) {
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
-        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>▶ Tocar</button>
+        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>${isPlaying ? 'Tocando' : '▶ Tocar'}</button>
         ${!isPlaying ? `<button class="btn btn--ghost" data-action="tocando" data-id="${item.id}">marcar tocando</button>` : `<button class="btn btn--ghost" data-action="tocada" data-id="${item.id}">marcar tocada</button>`}
         <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
         <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
@@ -221,10 +221,18 @@ strips.addEventListener('click', async (e) => {
 
   const playBtn = e.target.closest('[data-play-id]');
   if (playBtn && !playBtn.disabled) {
+    const row = playBtn.closest('.track-row');
+    if (row && row.dataset.status === 'tocando') {
+      if (spotifyPlayer) {
+        spotifyPlayer.togglePlay();
+      }
+      return;
+    }
+
     const queueItemId = playBtn.dataset.playId;
     const originalText = playBtn.textContent;
     playBtn.disabled = true;
-    playBtn.textContent = 'Tocando…';
+    playBtn.textContent = 'Carregando…';
     try {
       const res = await fetch('/api/spotify/play', {
         method: 'POST',
@@ -624,8 +632,16 @@ setInterval(async () => {
   if (!fillEl) return;
   
   const state = await spotifyPlayer.getCurrentState();
-  if (state && !state.paused && state.duration > 0) {
-    const pct = (state.position / state.duration) * 100;
-    fillEl.style.width = `${pct}%`;
+  if (state && state.duration > 0) {
+    if (!state.paused) {
+      const pct = (state.position / state.duration) * 100;
+      fillEl.style.width = `${pct}%`;
+    }
+    
+    // Atualizar texto do botão
+    const playBtn = tocandoRow.querySelector('[data-play-id]');
+    if (playBtn) {
+      playBtn.textContent = state.paused ? 'Pausado' : 'Tocando';
+    }
   }
 }, 1000);
