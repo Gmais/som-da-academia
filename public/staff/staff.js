@@ -669,6 +669,9 @@ checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
 
 // Loop para atualizar a barra de progresso da música tocando
+let isSkippingToNext = false;
+let currentTrackIdForSkip = null;
+
 setInterval(async () => {
   if (!spotifyPlayer) return;
   const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
@@ -679,9 +682,33 @@ setInterval(async () => {
   
   const state = await spotifyPlayer.getCurrentState();
   if (state && state.duration > 0) {
+    const trackId = state.track_window?.current_track?.id;
+    if (trackId && trackId !== currentTrackIdForSkip) {
+      currentTrackIdForSkip = trackId;
+      isSkippingToNext = false; // Reset quando a música muda
+    }
+
     if (!state.paused) {
       currentPlayingPct = (state.position / state.duration) * 100;
       fillEl.style.width = `${currentPlayingPct}%`;
+      
+      const timeLeft = state.duration - state.position;
+      if (timeLeft <= 5000 && !isSkippingToNext) { // 5 segundos para acabar
+        isSkippingToNext = true;
+        
+        const contextStrip = tocandoRow.closest('.strip');
+        if (contextStrip) {
+          const contextId = Number(contextStrip.dataset.contextId);
+          const checkbox = document.querySelector(`input[data-random-context="${contextId}"]`);
+          const isRandom = checkbox ? checkbox.checked : false;
+          
+          fetch('/api/spotify/play-next', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: contextId, random: isRandom })
+          }).then(() => loadQueue()).catch(e => console.error('Erro no skip antecipado:', e));
+        }
+      }
     }
     
     // Atualizar texto do botão
