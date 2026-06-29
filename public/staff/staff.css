@@ -159,6 +159,32 @@ body {
   border-left: 4px solid var(--amber);
 }
 
+.toggle-random {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  margin-left: 8px;
+}
+.toggle-random input[type="checkbox"] {
+  display: none;
+}
+.toggle-random .random-label {
+  padding: 4px 12px;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.toggle-random input[type="checkbox"]:checked + .random-label {
+  background-color: var(--amber);
+  color: var(--paper);
+  border-color: var(--amber);
+}
+
 .track-row__cover {
   width: 44px;
   height: 44px;

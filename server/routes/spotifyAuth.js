@@ -101,6 +101,51 @@ router.post('/play', async (req, res, next) => {
   }
 });
 
+// POST /api/spotify/play-next -> Toca a próxima música (aleatória ou sequencial)
+router.post('/play-next', async (req, res, next) => {
+  try {
+    const { contextId, deviceId, random } = req.body;
+    if (!contextId || !deviceId) {
+      return res.status(400).json({ erro: 'Faltam dados obrigatórios.' });
+    }
+
+    // Primeiro, marca as músicas "tocando" desse contexto como "tocada"
+    await query("UPDATE queue_items SET status = 'tocada', atualizado_em = $1 WHERE context_id = $2 AND status = 'tocando'", [Date.now(), contextId]);
+
+    // Busca as pendentes
+    const orderBy = random ? 'RANDOM()' : 'criado_em ASC';
+    const { rows } = await query(`SELECT * FROM queue_items WHERE context_id = $1 AND status = 'pendente' ORDER BY ${orderBy} LIMIT 1`, [contextId]);
+    
+    if (rows.length === 0) {
+      return res.json({ message: 'Fila vazia.' });
+    }
+    const nextItem = rows[0];
+
+    // Toca
+    const uri = await resolveTrackUri(nextItem.nome, nextItem.artista);
+    if (!uri) return res.status(404).json({ erro: 'Não achou URI' });
+
+    const token = await getValidAccessToken();
+    const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ uris: [uri] }),
+    });
+
+    if (playRes.ok || playRes.status === 204) {
+      await query("UPDATE queue_items SET status = 'tocando', atualizado_em = $1 WHERE id = $2", [Date.now(), nextItem.id]);
+      return res.json({ ok: true });
+    } else {
+      return res.status(502).json({ erro: 'Erro do Spotify' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/spotify/pause -> pausa o playback
 router.post('/pause', async (req, res, next) => {
   try {

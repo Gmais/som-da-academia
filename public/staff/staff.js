@@ -21,6 +21,7 @@ let spotifyPlayer = null;
 let knownContexts = [];
 let addDebounceTimer = null;
 let addLastQuery = '';
+let randomModes = JSON.parse(localStorage.getItem('sda_random_modes') || '{}');
 
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
@@ -93,7 +94,10 @@ function render(data) {
             <span class="strip__meta">
               <span class="level">${levelDots(ctx.naFila)}</span>
               <span class="strip__count">${ctx.naFila} na fila</span>
-              <button class="btn btn--ghost" style="margin-left: 8px" data-shuffle-context="${ctx.id}" title="Embaralha aleatoriamente as músicas pendentes deste contexto">🔀 Embaralhar</button>
+              <label class="toggle-random" title="Tocar músicas deste contexto de forma aleatória">
+                <input type="checkbox" data-random-context="${ctx.id}" class="random-checkbox" ${randomModes[ctx.id] ? 'checked' : ''} />
+                <span class="random-label">Tocar Aleatório</span>
+              </label>
               <button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" title="Transforma a fila desse contexto em uma playlist no Spotify">Criar Playlist</button>
             </span>
           </div>
@@ -243,6 +247,14 @@ strips.addEventListener('click', async (e) => {
       playBtn.disabled = false;
       playBtn.textContent = originalText;
     }
+    return;
+  }
+
+  const randomToggle = e.target.closest('.random-checkbox');
+  if (randomToggle) {
+    const contextId = randomToggle.dataset.randomContext;
+    randomModes[contextId] = randomToggle.checked;
+    localStorage.setItem('sda_random_modes', JSON.stringify(randomModes));
     return;
   }
 
@@ -514,6 +526,52 @@ function maybeStartPlayer() {
 
   spotifyPlayer.addListener('initialization_error', ({ message }) => {
     spotifyStatusEl.textContent = 'Não foi possível iniciar o player neste navegador: ' + message;
+  });
+
+  let currentTrackId = null;
+  spotifyPlayer.addListener('player_state_changed', async (state) => {
+    if (!state) return;
+    
+    // Detecta se a música acabou (paused = true, position = 0 e tem tracks anteriores)
+    if (state.paused && state.position === 0 && state.track_window.previous_tracks.length > 0) {
+      const endedTrackId = state.track_window.previous_tracks[0].id;
+      
+      // Para não rodar duas vezes pro mesmo track_id
+      if (currentTrackId !== endedTrackId) {
+        currentTrackId = endedTrackId;
+        
+        // Descobre qual contexto tem a música "tocando" no momento
+        const { contexts, activeContext } = knownContexts ? { contexts: knownContexts, activeContext: null } : { contexts: [], activeContext: null };
+        let activeCtxId = null;
+        for (const ctx of contexts) {
+          // A gente descobre o contexto ativo procurando no HTML onde está a classe tocando
+          const tocandoRow = document.querySelector(`.strip[data-context-id="${ctx.id}"] .track-row[data-status="tocando"]`);
+          if (tocandoRow) {
+            activeCtxId = ctx.id;
+            break;
+          }
+        }
+        
+        if (activeCtxId) {
+          // Verifica se o checkbox de Tocar Aleatório deste contexto está marcado
+          const checkbox = document.querySelector(`input[data-random-context="${activeCtxId}"]`);
+          const isRandom = checkbox ? checkbox.checked : false;
+          
+          try {
+            await fetch('/api/spotify/play-next', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: activeCtxId, random: isRandom })
+            });
+            loadQueue();
+          } catch (e) {
+            console.error('Erro no Auto-DJ:', e);
+          }
+        }
+      }
+    } else if (!state.paused) {
+      currentTrackId = null; // reseta ao tocar normalmente
+    }
   });
 
   spotifyPlayer.connect();
