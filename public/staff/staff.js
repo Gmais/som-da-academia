@@ -22,6 +22,7 @@ let knownContexts = [];
 let addDebounceTimer = null;
 let addLastQuery = '';
 let randomModes = JSON.parse(localStorage.getItem('sda_random_modes') || '{}');
+let currentPlayingPct = 0;
 
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
@@ -47,6 +48,7 @@ function levelDots(naFila, max = 5) {
 
 function renderTrackRow(item) {
   const isPlaying = item.status === 'tocando';
+  const widthStr = isPlaying ? `${currentPlayingPct}%` : '0%';
   return `
     <div class="track-row" data-status="${item.status}" data-id="${item.id}">
       <img class="track-row__cover" src="${item.capa_url || ''}" alt="" loading="lazy" />
@@ -55,7 +57,7 @@ function renderTrackRow(item) {
         <div class="track-row__artist">${escapeHtml(item.artista)}</div>
       </div>
       <div class="track-progress">
-        <div class="track-progress__fill" id="progress-${item.id}"></div>
+        <div class="track-progress__fill" id="progress-${item.id}" style="width: ${widthStr}; transition: ${isPlaying ? 'width 1s linear' : 'none'};"></div>
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
@@ -634,8 +636,8 @@ setInterval(async () => {
   const state = await spotifyPlayer.getCurrentState();
   if (state && state.duration > 0) {
     if (!state.paused) {
-      const pct = (state.position / state.duration) * 100;
-      fillEl.style.width = `${pct}%`;
+      currentPlayingPct = (state.position / state.duration) * 100;
+      fillEl.style.width = `${currentPlayingPct}%`;
     }
     
     // Atualizar texto do botão
