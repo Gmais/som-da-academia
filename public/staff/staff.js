@@ -94,6 +94,7 @@ function render(data) {
               <span class="strip__time">${ctx.hora_inicio}–${ctx.hora_fim}</span>
               <span class="level">${levelDots(ctx.naFila)}</span>
               <span class="strip__count">${ctx.naFila} na fila</span>
+              <button class="btn btn--ghost" style="margin-left: 8px" data-shuffle-context="${ctx.id}" title="Embaralha aleatoriamente as músicas pendentes deste contexto">🔀 Embaralhar</button>
               <button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" title="Transforma a fila desse contexto em uma playlist no Spotify">Criar Playlist</button>
             </span>
           </div>
@@ -181,6 +182,34 @@ strips.addEventListener('click', async (e) => {
       alert('Erro de rede ao tentar criar a playlist.');
       createPlaylistBtn.disabled = false;
       createPlaylistBtn.textContent = originalText;
+    }
+    return;
+  }
+
+  const shuffleBtn = e.target.closest('[data-shuffle-context]');
+  if (shuffleBtn) {
+    const contextId = Number(shuffleBtn.dataset.shuffleContext);
+    const originalText = shuffleBtn.textContent;
+    shuffleBtn.disabled = true;
+    shuffleBtn.textContent = 'Embaralhando...';
+    try {
+      const r = await fetch(`/api/contexts/${contextId}/shuffle`, { method: 'POST' });
+      if (r.ok) {
+        shuffleBtn.textContent = '✓ Pronto';
+        loadQueue();
+        setTimeout(() => {
+          shuffleBtn.textContent = originalText;
+          shuffleBtn.disabled = false;
+        }, 2000);
+      } else {
+        shuffleBtn.disabled = false;
+        shuffleBtn.textContent = originalText;
+        alert('Falha ao embaralhar.');
+      }
+    } catch {
+      shuffleBtn.disabled = false;
+      shuffleBtn.textContent = originalText;
+      alert('Erro de conexão ao tentar embaralhar.');
     }
     return;
   }

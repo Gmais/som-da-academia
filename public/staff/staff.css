@@ -155,7 +155,8 @@ body {
 }
 
 .track-row[data-status="tocando"] {
-  background: var(--signal-soft);
+  background: rgba(245, 158, 11, 0.15); /* orange/amber soft */
+  border-left: 4px solid var(--amber);
 }
 
 .track-row__cover {

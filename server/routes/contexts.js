@@ -42,4 +42,40 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+router.post('/:id/shuffle', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Pega todas as músicas pendentes desse contexto
+    const { rows: pendentes } = await query(
+      `SELECT id FROM queue_items 
+       WHERE context_id = $1 AND status = 'pendente'`,
+      [id]
+    );
+
+    if (pendentes.length < 2) {
+      return res.json({ ok: true, message: 'Nada para embaralhar' });
+    }
+
+    // Embaralha o array (Fisher-Yates)
+    for (let i = pendentes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pendentes[i], pendentes[j]] = [pendentes[j], pendentes[i]];
+    }
+
+    // Atualiza a ordem alterando o criado_em
+    const baseTime = Date.now();
+    for (let i = 0; i < pendentes.length; i++) {
+      await query(
+        `UPDATE queue_items SET criado_em = $1 WHERE id = $2`,
+        [baseTime + i, pendentes[i].id]
+      );
+    }
+
+    res.json({ ok: true, count: pendentes.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
