@@ -7,5 +7,11 @@
   ],
   "redirects": [
     { "source": "/", "destination": "/staff", "permanent": false }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/reset-diario",
+      "schedule": "59 2 * * *"
+    }
   ]
 }

@@ -9,6 +9,7 @@ const searchRouter = require('./routes/search');
 const queueRouter = require('./routes/queue');
 const qrcodeRouter = require('./routes/qrcode');
 const spotifyAuthRouter = require('./routes/spotifyAuth');
+const cronRouter = require('./routes/cron');
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use('/api/contexts', contextsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/qrcode', qrcodeRouter);
 app.use('/api/spotify', spotifyAuthRouter);
+app.use('/api/cron', cronRouter);
 // queueRouter cuida de GET /api/queue, POST /api/queue/suggestions e PATCH /api/queue/:id
 app.use('/api/queue', queueRouter);
 
