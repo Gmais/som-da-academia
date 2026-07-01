@@ -48,7 +48,20 @@ function levelDots(naFila, max = 5) {
 
 function renderTrackRow(item) {
   const isPlaying = item.status === 'tocando';
+  const isPlayed = item.status === 'tocada';
   const widthStr = isPlaying ? `${currentPlayingPct}%` : '0%';
+
+  let actionBtn;
+  if (isPlaying) {
+    actionBtn = `<button class="btn btn--ghost" data-action="tocada" data-id="${item.id}">marcar tocada</button>`;
+  } else if (isPlayed) {
+    actionBtn = `<button class="btn btn--ghost" data-action="pendente" data-id="${item.id}">colocar na fila</button>`;
+  } else {
+    actionBtn = `<button class="btn btn--ghost" data-action="tocando" data-id="${item.id}">marcar tocando</button>`;
+  }
+
+  const playLabel = isPlaying ? 'Tocando' : isPlayed ? '↺ Tocar de novo' : '▶ Tocar';
+
   return `
     <div class="track-row" data-status="${item.status}" data-id="${item.id}">
       <img class="track-row__cover" src="${item.capa_url || ''}" alt="" loading="lazy" />
@@ -64,8 +77,8 @@ function renderTrackRow(item) {
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
-        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>${isPlaying ? 'Tocando' : '▶ Tocar'}</button>
-        ${!isPlaying ? `<button class="btn btn--ghost" data-action="tocando" data-id="${item.id}">marcar tocando</button>` : `<button class="btn btn--ghost" data-action="tocada" data-id="${item.id}">marcar tocada</button>`}
+        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>${playLabel}</button>
+        ${actionBtn}
         <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
         <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
       </div>

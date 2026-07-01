@@ -159,6 +159,11 @@ body {
   border-left: 4px solid var(--amber);
 }
 
+.track-row[data-status="tocada"] {
+  opacity: 0.45;
+  border-left: 4px solid transparent;
+}
+
 .track-progress {
   height: 6px;
   background: rgba(0, 0, 0, 0.1);

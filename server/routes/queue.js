@@ -41,8 +41,11 @@ router.get('/', async (req, res, next) => {
     if (requestedId) {
       const { rows } = await query(
         `SELECT * FROM queue_items
-         WHERE context_id = $1 AND status IN ('pendente','tocando')
-         ORDER BY (status = 'tocando') DESC, criado_em ASC`,
+         WHERE context_id = $1 AND status IN ('pendente','tocando','tocada')
+         ORDER BY
+           (status = 'tocando') DESC,
+           (status = 'pendente') DESC,
+           criado_em ASC`,
         [requestedId]
       );
       items = rows;
