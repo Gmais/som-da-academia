@@ -3,10 +3,11 @@ const { query } = require('../db');
 
 const router = express.Router();
 
-// POST /api/cron/reset-diario
+// GET /api/cron/reset-diario
 // Chamado pelo Vercel Cron às 23:59 (BRT) todo dia.
+// Vercel Cron Jobs sempre disparam via HTTP GET, por isso a rota precisa ser GET.
 // Volta todas as músicas 'tocada' para 'pendente', zerando o histórico do dia.
-router.post('/reset-diario', async (req, res, next) => {
+router.get('/reset-diario', async (req, res, next) => {
   try {
     const secret = process.env.CRON_SECRET;
     const authHeader = req.headers.authorization;
