@@ -16,11 +16,11 @@ router.get('/reset-diario', async (req, res, next) => {
     }
 
     const { rowCount } = await query(
-      "UPDATE queue_items SET status = 'pendente', atualizado_em = $1 WHERE status = 'tocada'",
+      "UPDATE queue_items SET status = 'pendente', atualizado_em = $1 WHERE status != 'pendente'",
       [Date.now()]
     );
 
-    console.log(`[reset-diario] ${rowCount} músicas voltaram para pendente.`);
+    console.log(`[reset-diario] ${rowCount} músicas voltaram para a fila (pendente).`);
     res.json({ ok: true, resetadas: rowCount });
   } catch (err) {
     next(err);
