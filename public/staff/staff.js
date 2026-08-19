@@ -14,6 +14,9 @@ const spotifyStatusEl = document.getElementById('spotify-status');
 const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
 const spotifyDisconnectBtn = document.getElementById('spotify-disconnect-btn');
 const spotifyPauseBtn = document.getElementById('spotify-pause-btn');
+const volumeSlider = document.getElementById('volume-slider');
+const volumeValueEl = document.getElementById('volume-value');
+const volumeIconEl = document.getElementById('volume-icon');
 
 let spotifyDeviceId = null;
 let spotifyPlayer = null;
@@ -26,6 +29,35 @@ let currentPlayingPct = 0;
 
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
+
+// --- Volume do player ---
+
+function getSavedVolumePct() {
+  const raw = parseInt(localStorage.getItem('sda_volume'), 10);
+  if (Number.isNaN(raw)) return 80;
+  return Math.min(100, Math.max(0, raw));
+}
+
+function volumeIcon(pct) {
+  if (pct === 0) return '🔇';
+  if (pct < 50) return '🔉';
+  return '🔊';
+}
+
+function setVolumeUi(pct) {
+  volumeSlider.value = String(pct);
+  volumeValueEl.textContent = `${pct}%`;
+  volumeIconEl.textContent = volumeIcon(pct);
+}
+
+setVolumeUi(getSavedVolumePct());
+
+volumeSlider.addEventListener('input', () => {
+  const pct = Number(volumeSlider.value);
+  setVolumeUi(pct);
+  localStorage.setItem('sda_volume', String(pct));
+  if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100);
+});
 
 function fmtDuration(ms) {
   if (!ms) return '--:--';
@@ -572,7 +604,7 @@ function maybeStartPlayer() {
       const data = await res.json();
       callback(data.accessToken);
     },
-    volume: 0.8,
+    volume: getSavedVolumePct() / 100,
   });
 
   spotifyPlayer.addListener('ready', ({ device_id }) => {

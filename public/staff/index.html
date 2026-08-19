@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/shared/tokens.css" />
-<link rel="stylesheet" href="/staff/staff.css?v=5" />
+<link rel="stylesheet" href="/staff/staff.css?v=6" />
 </head>
 <body>
 
@@ -32,6 +32,11 @@
       <a href="/api/spotify/login" id="spotify-connect-btn" class="btn btn--primary" hidden>Conectar Spotify</a>
       <a href="/api/spotify/logout" id="spotify-disconnect-btn" class="btn btn--ghost" hidden>Desconectar</a>
       <button id="spotify-pause-btn" class="btn btn--ghost" hidden>⏸ Pausar</button>
+      <div class="volume-control" id="volume-control" title="Volume do player">
+        <span class="volume-control__icon" id="volume-icon" aria-hidden="true">🔊</span>
+        <input type="range" id="volume-slider" min="0" max="100" value="80" aria-label="Volume do player" />
+        <span class="volume-control__value" id="volume-value">80%</span>
+      </div>
     </section>
 
     <section class="strips" id="strips" aria-label="Contextos e filas de sugestão">
@@ -88,6 +93,6 @@
   </div>
 
   <script src="https://sdk.scdn.co/spotify-player.js"></script>
-  <script src="/staff/staff.js?v=9"></script>
+  <script src="/staff/staff.js?v=10"></script>
 </body>
 </html>

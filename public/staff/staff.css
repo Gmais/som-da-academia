@@ -425,6 +425,63 @@ body {
 
 .spotify-bar strong { color: var(--ink); }
 
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.volume-control__icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.volume-control__value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  min-width: 34px;
+  text-align: right;
+}
+
+#volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 110px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--paper-dim);
+  outline: none;
+  cursor: pointer;
+}
+
+#volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: none;
+  cursor: pointer;
+}
+
+#volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--amber);
+  border: none;
+  cursor: pointer;
+}
+
+#volume-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--paper-dim);
+}
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }
