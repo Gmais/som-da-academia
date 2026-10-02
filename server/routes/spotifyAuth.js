@@ -334,4 +334,64 @@ router.post('/mass-import-text', async (req, res, next) => {
   }
 });
 
+// PUT /api/spotify/volume -> ajusta o volume no dispositivo ativo do Spotify
+router.put('/volume', async (req, res, next) => {
+  try {
+    const { volume_percent } = req.body;
+    if (volume_percent == null || volume_percent < 0 || volume_percent > 100) {
+      return res.status(400).json({ erro: 'volume_percent deve ser entre 0 e 100.' });
+    }
+
+    const token = await getValidAccessToken();
+    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
+
+    const volRes = await fetch(
+      `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(volume_percent)}`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (!volRes.ok && volRes.status !== 204) {
+      const text = await volRes.text();
+      return res.status(502).json({ erro: `Spotify recusou o comando de volume: ${text}` });
+    }
+
+    res.json({ ok: true, volume_percent: Math.round(volume_percent) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/spotify/volume -> lê o volume atual do dispositivo ativo
+router.get('/volume', async (req, res, next) => {
+  try {
+    const token = await getValidAccessToken();
+    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
+
+    const stateRes = await fetch('https://api.spotify.com/v1/me/player', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    // 204 = nenhum dispositivo ativo
+    if (stateRes.status === 204) {
+      return res.json({ volume_percent: null, device: null });
+    }
+
+    if (!stateRes.ok) {
+      const text = await stateRes.text();
+      return res.status(502).json({ erro: `Falha ao ler estado do player: ${text}` });
+    }
+
+    const data = await stateRes.json();
+    res.json({
+      volume_percent: data.device?.volume_percent ?? null,
+      device: data.device?.name ?? null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

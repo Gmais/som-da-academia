@@ -30,7 +30,11 @@ let currentPlayingPct = 0;
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
 
-// --- Volume do player ---
+// --- Volume do player (síncrono via API do Spotify) ---
+
+let volumeDebounceTimer = null;
+let volumeSyncPaused = false; // pausa a sincronização enquanto o usuário arrasta o slider
+let lastKnownVolume = null;   // último volume lido do Spotify (evita loop)
 
 function getSavedVolumePct() {
   const raw = parseInt(localStorage.getItem('sda_volume'), 10);
@@ -52,12 +56,61 @@ function setVolumeUi(pct) {
 
 setVolumeUi(getSavedVolumePct());
 
+// Envia o volume para a API do Spotify (controla o dispositivo real)
+async function sendVolumeToSpotify(pct) {
+  try {
+    await fetch('/api/spotify/volume', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volume_percent: pct }),
+    });
+    lastKnownVolume = pct;
+  } catch (e) {
+    console.error('Erro ao enviar volume para o Spotify:', e);
+  }
+}
+
+// Lê o volume atual do dispositivo Spotify e atualiza o slider
+async function syncVolumeFromSpotify() {
+  if (volumeSyncPaused) return; // não sobrescreve enquanto o usuário mexe
+  try {
+    const res = await fetch('/api/spotify/volume');
+    const data = await res.json();
+    if (data.volume_percent != null) {
+      const pct = Math.round(data.volume_percent);
+      if (pct !== lastKnownVolume) {
+        lastKnownVolume = pct;
+        setVolumeUi(pct);
+        localStorage.setItem('sda_volume', String(pct));
+        if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100);
+      }
+    }
+  } catch (e) {
+    // silencioso — rede pode estar instável
+  }
+}
+
 volumeSlider.addEventListener('input', () => {
   const pct = Number(volumeSlider.value);
   setVolumeUi(pct);
   localStorage.setItem('sda_volume', String(pct));
+
+  // Atualiza o player local imediatamente para feedback
   if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100);
+
+  // Pausa a sincronização enquanto o usuário arrasta
+  volumeSyncPaused = true;
+
+  // Debounce: só envia para a API 300ms após parar de arrastar
+  clearTimeout(volumeDebounceTimer);
+  volumeDebounceTimer = setTimeout(() => {
+    sendVolumeToSpotify(pct);
+    volumeSyncPaused = false;
+  }, 300);
 });
+
+// Polling: sincroniza o volume a cada 10 segundos
+setInterval(syncVolumeFromSpotify, 10000);
 
 function fmtDuration(ms) {
   if (!ms) return '--:--';
