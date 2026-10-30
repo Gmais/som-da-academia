@@ -30,6 +30,29 @@ let currentPlayingPct = 0;
 let viewingContextId = null; // null = segue o contexto ativo automaticamente
 let lastData = null;
 
+// --- Player Oficial: só uma tela toca; as outras só controlam ---
+
+const officialBtn = document.getElementById('official-player-btn');
+
+// Identifica esta aba (sobrevive a recarregar, não é compartilhada entre abas)
+function getClientId() {
+  try {
+    let id = sessionStorage.getItem('sda_client_id');
+    if (!id) {
+      id = (crypto.randomUUID && crypto.randomUUID()) || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem('sda_client_id', id);
+    }
+    return id;
+  } catch {
+    return `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+const clientId = getClientId();
+let officialOwnerId = null;
+let isOfficial = false;
+const officialChannel = 'BroadcastChannel' in window ? new BroadcastChannel('sda_official_player') : null;
+
 // --- Volume do player (síncrono via API do Spotify) ---
 
 let volumeDebounceTimer = null;
@@ -162,7 +185,7 @@ function renderTrackRow(item) {
       </div>
       <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
       <div class="track-row__actions">
-        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : 'disabled title="Conecte o Spotify e espere o player ficar pronto"'}>${playLabel}</button>
+        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : `disabled title="${isOfficial ? 'Conecte o Spotify e espere o player ficar pronto' : 'Só o Player Oficial toca. Ative &quot;Player Oficial&quot; nesta tela para tocar aqui.'}"`}>${playLabel}</button>
         ${actionBtn}
         <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
         <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
@@ -349,7 +372,7 @@ strips.addEventListener('click', async (e) => {
       const res = await fetch('/api/spotify/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId }),
+        body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId, clientId }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -648,7 +671,7 @@ window.onSpotifyWebPlaybackSDKReady = () => {
 };
 
 function maybeStartPlayer() {
-  if (!spotifySdkReady || !spotifyConnected || spotifyPlayer) return;
+  if (!spotifySdkReady || !spotifyConnected || !isOfficial || spotifyPlayer) return;
 
   spotifyPlayer = new Spotify.Player({
     name: 'Som da Academia',
@@ -717,7 +740,7 @@ function maybeStartPlayer() {
             await fetch('/api/spotify/play-next', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: activeCtxId, random: isRandom })
+              body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: activeCtxId, random: isRandom, clientId })
             });
             loadQueue();
           } catch (e) {
@@ -741,7 +764,9 @@ async function checkSpotifyStatus() {
       spotifyConnected = true;
       spotifyConnectBtn.hidden = true;
       spotifyDisconnectBtn.hidden = false;
-      if (!spotifyPlayer) {
+      if (!isOfficial) {
+        updateSpotifyStatusText();
+      } else if (!spotifyPlayer) {
         spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
         maybeStartPlayer();
       }
@@ -762,6 +787,83 @@ spotifyPauseBtn.addEventListener('click', async () => {
     body: JSON.stringify({ deviceId: spotifyDeviceId }),
   });
 });
+
+// --- Player Oficial: ligar/desligar e sincronizar entre telas ---
+
+function updateSpotifyStatusText() {
+  if (!spotifyConnected || isOfficial) return;
+  spotifyStatusEl.innerHTML = officialOwnerId
+    ? 'Spotify conectado — <strong>o som toca em outra tela</strong> (esta só controla)'
+    : 'Spotify conectado — <strong>nenhuma tela é o Player Oficial</strong>';
+}
+
+function stopLocalPlayer() {
+  if (spotifyPlayer) {
+    spotifyPlayer.disconnect(); // some o dispositivo e para o som desta tela
+    spotifyPlayer = null;
+  }
+  spotifyDeviceId = null;
+  spotifyPauseBtn.hidden = true;
+}
+
+function applyOfficialRole() {
+  officialBtn.textContent = `Player Oficial: ${isOfficial ? 'ON' : 'OFF'}`;
+  officialBtn.setAttribute('aria-pressed', String(isOfficial));
+
+  if (isOfficial) {
+    if (spotifyConnected && !spotifyPlayer) {
+      spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
+    }
+    maybeStartPlayer();
+  } else {
+    stopLocalPlayer();
+    updateSpotifyStatusText();
+  }
+  if (lastData) render(lastData); // reabilita/desabilita os botões "Tocar"
+}
+
+function setOfficialOwner(ownerId) {
+  officialOwnerId = ownerId;
+  const nowOfficial = ownerId === clientId;
+  const changed = nowOfficial !== isOfficial;
+  isOfficial = nowOfficial;
+  if (changed) applyOfficialRole();
+  else updateSpotifyStatusText();
+}
+
+async function refreshOfficialOwner() {
+  try {
+    const res = await fetch('/api/spotify/official');
+    const data = await res.json();
+    setOfficialOwner(data.ownerId || null);
+  } catch {
+    // silencioso — tenta de novo no próximo ciclo
+  }
+}
+
+officialBtn.addEventListener('click', async () => {
+  officialBtn.disabled = true;
+  try {
+    const res = await fetch('/api/spotify/official', {
+      method: isOfficial ? 'DELETE' : 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.erro);
+    setOfficialOwner(data.ownerId || null);
+    if (officialChannel) officialChannel.postMessage('changed'); // avisa outras abas deste navegador na hora
+  } catch {
+    alert('Não foi possível alterar o Player Oficial.');
+  } finally {
+    officialBtn.disabled = false;
+  }
+});
+
+if (officialChannel) officialChannel.onmessage = () => refreshOfficialOwner();
+
+refreshOfficialOwner();
+setInterval(refreshOfficialOwner, 1000 * 3);
 
 checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
@@ -803,7 +905,7 @@ setInterval(async () => {
           fetch('/api/spotify/play-next', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: contextId, random: isRandom })
+            body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: contextId, random: isRandom, clientId })
           }).then(() => loadQueue()).catch(e => console.error('Erro no skip antecipado:', e));
         }
       }

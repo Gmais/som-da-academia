@@ -20,6 +20,66 @@ router.get('/status', async (req, res, next) => {
   }
 });
 
+// --- Player Oficial: só uma tela (clientId) pode tocar; as outras só controlam ---
+
+async function getOfficialOwner() {
+  const { rows } = await query('SELECT owner_id FROM player_state WHERE id = 1');
+  return rows[0]?.owner_id || null;
+}
+
+// GET /api/spotify/official -> qual tela é o Player Oficial agora
+router.get('/official', async (req, res, next) => {
+  try {
+    res.json({ ownerId: await getOfficialOwner() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/spotify/official -> esta tela vira o Player Oficial (as outras perdem o posto)
+router.put('/official', async (req, res, next) => {
+  try {
+    const { clientId } = req.body;
+    if (!clientId) return res.status(400).json({ erro: 'clientId é obrigatório.' });
+    await query(
+      `INSERT INTO player_state (id, owner_id, atualizado_em) VALUES (1, $1, $2)
+       ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id, atualizado_em = EXCLUDED.atualizado_em`,
+      [clientId, Date.now()]
+    );
+    res.json({ ownerId: clientId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/spotify/official -> esta tela deixa de ser o Player Oficial (só se ainda for a dona)
+router.delete('/official', async (req, res, next) => {
+  try {
+    const { clientId } = req.body;
+    if (!clientId) return res.status(400).json({ erro: 'clientId é obrigatório.' });
+    await query(
+      'UPDATE player_state SET owner_id = NULL, atualizado_em = $1 WHERE id = 1 AND owner_id = $2',
+      [Date.now(), clientId]
+    );
+    res.json({ ownerId: await getOfficialOwner() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Barreira no servidor: só o Player Oficial pode mandar tocar
+async function requireOfficial(req, res, next) {
+  try {
+    const { clientId } = req.body;
+    if (!clientId || clientId !== (await getOfficialOwner())) {
+      return res.status(403).json({ erro: 'Esta tela não é o Player Oficial. Ative "Player Oficial" aqui para tocar.' });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/spotify/login -> inicia o fluxo OAuth, redireciona pro Spotify
 router.get('/login', (req, res) => {
   const state = nanoid();
@@ -62,7 +122,7 @@ router.get('/token', async (req, res, next) => {
 });
 
 // POST /api/spotify/play -> resolve o URI exato e manda tocar no dispositivo
-router.post('/play', async (req, res, next) => {
+router.post('/play', requireOfficial, async (req, res, next) => {
   try {
     const { queueItemId, deviceId } = req.body;
     if (!queueItemId || !deviceId) {
@@ -110,7 +170,7 @@ router.post('/play', async (req, res, next) => {
 });
 
 // POST /api/spotify/play-next -> Toca a próxima música (aleatória ou sequencial)
-router.post('/play-next', async (req, res, next) => {
+router.post('/play-next', requireOfficial, async (req, res, next) => {
   try {
     const { contextId, deviceId, random } = req.body;
     if (!contextId || !deviceId) {

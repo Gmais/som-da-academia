@@ -425,6 +425,14 @@ body {
 
 .spotify-bar strong { color: var(--ink); }
 
+.official-btn { white-space: nowrap; }
+
+.official-btn[aria-pressed="true"] {
+  background: var(--signal);
+  color: #fff;
+  border-color: var(--signal);
+}
+
 .volume-control {
   display: flex;
   align-items: center;

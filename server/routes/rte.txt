@@ -1,0 +1,57 @@
+# Tutorial: ligar o segundo Caixa e o KDS ao servidor da loja
+
+Faça tudo isto **em cada computador** (segundo Caixa e KDS). O PC do servidor já foi preparado pelo instalador.
+
+## Antes de começar, tenha à mão
+- **O IP do PC do servidor** (exemplo: `192.168.0.10`). Se esquecer, no PC do servidor abra o PowerShell e rode `ipconfig`: é o "Endereço IPv4".
+- **O token** que o instalador mostrou. Se perdeu, no PC do servidor abra o Bloco de Notas **como administrador** e abra `...\servidor-loja\config.json`; o token está na linha `"token"`.
+
+## Passo 1: fazer o computador confiar no servidor
+
+**Jeito A (com o script)**
+1. Copie o arquivo `confiar-no-servidor.ps1` (está na pasta `servidor-loja` do zip) para a Área de Trabalho do computador, por pendrive ou Google Drive.
+2. Clique no menu Iniciar, digite **PowerShell**, clique com o botão direito e escolha **Executar como administrador**.
+3. Cole estas duas linhas, trocando o IP pelo seu, e aperte Enter:
+```
+cd $env:USERPROFILE\Desktop
+powershell -ExecutionPolicy Bypass -File .\confiar-no-servidor.ps1 -Ip 192.168.0.10
+```
+4. Deve aparecer, em verde: *"Pronto: este computador confia no servidor da loja."*
+
+**Jeito B (sem script, tudo pelo Chrome)**
+1. No Chrome, abra `http://192.168.0.10:8081`.
+2. Clique em **baixar servidor-loja-ca.cer** e dê dois cliques no arquivo baixado.
+3. Clique em **Instalar Certificado**, escolha **Máquina Local**, **Avançar** e confirme se o Windows pedir.
+4. Marque **Colocar todos os certificados no repositório a seguir**, clique em **Procurar** e escolha **Autoridades de Certificação Raiz Confiáveis**.
+5. Clique em **OK**, **Avançar**, **Concluir** e **Sim** no aviso de segurança.
+
+## Passo 2: reiniciar o Chrome
+Feche **todas** as janelas do Chrome (confira também o ícone perto do relógio) e abra de novo.
+
+## Passo 3: conferir
+No Chrome, abra `https://192.168.0.10:8443/saude`. Deve aparecer um texto começando com `{"ok":true`, **sem** aviso vermelho de "conexão não é particular".
+
+## Passo 4: preencher no sistema
+1. Abra o site do Caixa, entre em **Admin** com a senha e vá em **Caixa > Periféricos**.
+2. Role até o cartão **Servidor da loja**.
+3. Em **Endereço**, digite `https://192.168.0.10:8443`. Em **Token**, digite o token.
+4. Clique em **Testar conexão**.
+5. Se o Chrome perguntar se o site pode acessar dispositivos da rede local, clique em **Permitir** e clique em **Testar conexão** de novo.
+6. Deve aparecer, em verde, *"Servidor da loja conectado."* Clique em **Ativar neste computador**.
+
+Se o PC do servidor também roda Caixa ou KDS, faça o Passo 4 nele também. O Passo 1 não precisa, porque o instalador já cuidou disso.
+
+## Passo 5: abrir uma vez com internet
+Com a internet funcionando, abra o **Caixa** e o **KDS** uma vez neste computador. É isso que permite abrirem depois sem internet.
+
+## Se algo der errado
+
+| Aparece | O que fazer |
+|---|---|
+| "a execução de scripts foi desabilitada" | Use exatamente o comando do Passo 1 com `-ExecutionPolicy Bypass`. |
+| Erro ao baixar o certificado | Confira o IP e se o servidor está ligado. No PC do servidor rode `Get-ScheduledTask ServidorLoja`. |
+| "Conexão não é particular" no Passo 3 | O certificado não foi instalado ou o Chrome não foi fechado por completo. Repita os passos 1 e 2. |
+| "Não consegui falar com o servidor" no teste | Confira o endereço (`https://`, com a porta `:8443`) e se os dois PCs estão na mesma rede. |
+| "O token não confere" | Confira o token, sem espaços no início ou no fim. |
+
+Se quiser, monto este tutorial como uma página para imprimir e deixar na loja.

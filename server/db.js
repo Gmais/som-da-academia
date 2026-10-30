@@ -56,6 +56,13 @@ function ensureSchema() {
           CONSTRAINT single_row CHECK (id = 1)
         );
 
+        CREATE TABLE IF NOT EXISTS player_state (
+          id INTEGER PRIMARY KEY DEFAULT 1,
+          owner_id TEXT,
+          atualizado_em BIGINT,
+          CONSTRAINT player_state_single_row CHECK (id = 1)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_queue_context_status ON queue_items(context_id, status);
         CREATE INDEX IF NOT EXISTS idx_suggestion_log_token ON suggestion_log(token, criado_em);
       `);
