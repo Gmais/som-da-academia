@@ -732,17 +732,20 @@ function maybeStartPlayer() {
   });
 
   let currentTrackId = null;
+  let isAutoPlayingNext = false; // impede múltiplas chamadas simultâneas
+
   spotifyPlayer.addListener('player_state_changed', async (state) => {
-    if (!state) return;
-    
+    if (!state || isAutoPlayingNext) return;
+
     // Detecta se a música acabou (paused = true, position = 0 e tem tracks anteriores)
     if (state.paused && state.position === 0 && state.track_window.previous_tracks.length > 0) {
       const endedTrackId = state.track_window.previous_tracks[0].id;
-      
+
       // Para não rodar duas vezes pro mesmo track_id
       if (currentTrackId !== endedTrackId) {
         currentTrackId = endedTrackId;
-        
+        isAutoPlayingNext = true;
+
         // Descobre qual contexto tem a música "tocando" no momento
         const { contexts, activeContext } = knownContexts ? { contexts: knownContexts, activeContext: null } : { contexts: [], activeContext: null };
         let activeCtxId = null;
@@ -754,26 +757,31 @@ function maybeStartPlayer() {
             break;
           }
         }
-        
+
         if (activeCtxId) {
           // Verifica se o checkbox de Tocar Aleatório deste contexto está marcado
           const checkbox = document.querySelector(`input[data-random-context="${activeCtxId}"]`);
           const isRandom = checkbox ? checkbox.checked : false;
-          
+
           try {
-            await fetch('/api/spotify/play-next', {
+            const playRes = await fetch('/api/spotify/play-next', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: activeCtxId, random: isRandom, clientId })
             });
-            loadQueue();
+            if (playRes.ok) {
+              loadQueue();
+            }
           } catch (e) {
             console.error('Erro no Auto-DJ:', e);
           }
         }
+
+        isAutoPlayingNext = false;
       }
     } else if (!state.paused) {
       currentTrackId = null; // reseta ao tocar normalmente
+      isAutoPlayingNext = false;
     }
   });
 
@@ -893,9 +901,6 @@ checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
 
 // Loop para atualizar a barra de progresso da música tocando
-let isSkippingToNext = false;
-let currentTrackIdForSkip = null;
-
 setInterval(async () => {
   if (!spotifyPlayer) return;
   const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
@@ -903,42 +908,16 @@ setInterval(async () => {
   const queueItemId = tocandoRow.dataset.id;
   const fillEl = document.getElementById(`progress-${queueItemId}`);
   if (!fillEl) return;
-  
-  const state = await spotifyPlayer.getCurrentState();
-  if (state && state.duration > 0) {
-    const trackId = state.track_window?.current_track?.id;
-    if (trackId && trackId !== currentTrackIdForSkip) {
-      currentTrackIdForSkip = trackId;
-      isSkippingToNext = false; // Reset quando a música muda
-    }
 
-    if (!state.paused) {
-      currentPlayingPct = (state.position / state.duration) * 100;
-      fillEl.style.width = `${currentPlayingPct}%`;
-      
-      const timeLeft = state.duration - state.position;
-      if (timeLeft <= 5000 && !isSkippingToNext) { // 5 segundos para acabar
-        isSkippingToNext = true;
-        
-        const contextStrip = tocandoRow.closest('.strip');
-        if (contextStrip) {
-          const contextId = Number(contextStrip.dataset.contextId);
-          const checkbox = document.querySelector(`input[data-random-context="${contextId}"]`);
-          const isRandom = checkbox ? checkbox.checked : false;
-          
-          fetch('/api/spotify/play-next', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: contextId, random: isRandom, clientId })
-          }).then(() => loadQueue()).catch(e => console.error('Erro no skip antecipado:', e));
-        }
-      }
-    }
-    
+  const state = await spotifyPlayer.getCurrentState();
+  if (state && state.duration > 0 && !state.paused) {
+    currentPlayingPct = (state.position / state.duration) * 100;
+    fillEl.style.width = `${currentPlayingPct}%`;
+
     // Atualizar texto do botão
     const playBtn = tocandoRow.querySelector('[data-play-id]');
     if (playBtn) {
-      playBtn.textContent = state.paused ? 'Pausado' : 'Tocando';
+      playBtn.textContent = 'Tocando';
     }
   }
 }, 1000);
