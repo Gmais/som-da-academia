@@ -287,40 +287,6 @@ async function loadQueue() {
   const data = await res.json();
   render(data);
   updateNowPlayingWidget();
-
-  // Se é o Player Oficial, detecta quando outra aba marcou algo como "tocando" e toca
-  // (Mas só se não está tocando nada atualmente)
-  if (isOfficial && spotifyPlayer && spotifyDeviceId) {
-    const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
-    if (tocandoRow) {
-      const currentState = await spotifyPlayer.getCurrentState();
-
-      // Só toca se:
-      // 1. Nada está tocando (paused e position~0)
-      // 2. Ou está tocando algo diferente (IDs não batem)
-      const dbTrackId = tocandoRow.dataset.trackId;
-      const playingTrackId = currentState?.track_window?.current_track?.id;
-      const nothingPlaying = !currentState || !currentState.track_window.current_track ||
-                             (currentState.paused && currentState.position < 1000);
-      const differentTrack = playingTrackId && playingTrackId !== dbTrackId;
-
-      if ((nothingPlaying || differentTrack) && !isAutoPlayingNext) {
-        const queueItemId = tocandoRow.dataset.id;
-        try {
-          const playRes = await fetch('/api/spotify/play', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId, clientId }),
-          });
-          if (playRes.ok) {
-            // Sucesso, não precisa fazer nada
-          }
-        } catch (e) {
-          console.error('Erro ao tocar música de outra aba:', e);
-        }
-      }
-    }
-  }
 }
 
 strips.addEventListener('click', async (e) => {
@@ -558,7 +524,7 @@ qrImg.src = '/api/qrcode?' + Date.now();
 tickClock();
 setInterval(tickClock, 1000 * 10);
 loadQueue();
-setInterval(loadQueue, 1000 * 5); // sincroniza a cada 5s para detectar rápido quando outro PC marca algo como tocando
+setInterval(loadQueue, 1000 * 15);
 
 // --- Adicionar música direto (busca independente da fila, não é afetada pelo auto-refresh) ---
 
