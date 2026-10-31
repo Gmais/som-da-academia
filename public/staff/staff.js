@@ -827,7 +827,14 @@ function applyOfficialRole() {
     stopLocalPlayer();
     updateSpotifyStatusText();
   }
-  if (lastData) render(lastData); // reabilita/desabilita os botões "Tocar"
+  // Não re-renderiza a fila inteira — apenas atualiza button states
+  // Evita desincronizar o playback durante refresh periódico do official owner
+  if (lastData) {
+    const playBtns = document.querySelectorAll('[data-play-id]');
+    playBtns.forEach(btn => {
+      btn.disabled = !spotifyDeviceId || (!isOfficial && officialOwnerId);
+    });
+  }
 }
 
 function setOfficialOwner(ownerId) {
