@@ -286,6 +286,7 @@ async function loadQueue() {
   const res = await fetch(`/api/queue${qs}`);
   const data = await res.json();
   render(data);
+  updateNowPlayingWidget();
 
   // Se é o Player Oficial, detecta quando outra aba marcou algo como "tocando" e toca
   // (Mas só se não está tocando nada atualmente)
@@ -917,6 +918,51 @@ setInterval(refreshOfficialOwner, 1000 * 3);
 checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
 
+// Atualizar widget do now playing
+function updateNowPlayingWidget() {
+  const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
+  const nowPlayingEl = document.getElementById('now-playing');
+
+  if (!tocandoRow) {
+    if (nowPlayingEl) nowPlayingEl.hidden = true;
+    return;
+  }
+
+  if (nowPlayingEl) nowPlayingEl.hidden = false;
+
+  document.getElementById('now-playing-title').textContent = tocandoRow.querySelector('.track-row__name')?.textContent || '—';
+  document.getElementById('now-playing-artist').textContent = tocandoRow.querySelector('.track-row__artist')?.textContent || '—';
+  document.getElementById('now-playing-cover').src = tocandoRow.querySelector('.track-row__cover')?.src || '';
+  document.getElementById('now-playing-duration').textContent = tocandoRow.querySelector('.track-row__duration')?.textContent || '0:00';
+
+  // Próxima música
+  const nextRow = tocandoRow.nextElementSibling?.classList.contains('track-row') ? tocandoRow.nextElementSibling : null;
+  if (nextRow) {
+    document.getElementById('now-playing-next-title').textContent = nextRow.querySelector('.track-row__name')?.textContent || '—';
+    document.getElementById('now-playing-next-artist').textContent = nextRow.querySelector('.track-row__artist')?.textContent || '—';
+    document.getElementById('now-playing-next-cover').src = nextRow.querySelector('.track-row__cover')?.src || '';
+  } else {
+    document.getElementById('now-playing-next-title').textContent = '—';
+    document.getElementById('now-playing-next-artist').textContent = '—';
+    document.getElementById('now-playing-next-cover').src = '';
+  }
+
+  // Delete button
+  const deleteBtn = document.getElementById('now-playing-delete');
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      const id = tocandoRow.dataset.id;
+      if (!confirm('Tem certeza que quer remover esta música?')) return;
+      await fetch(`/api/queue/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'removida' }),
+      });
+      loadQueue();
+    };
+  }
+}
+
 // Loop para atualizar a barra de progresso da música tocando
 setInterval(async () => {
   if (!spotifyPlayer) return;
@@ -930,6 +976,19 @@ setInterval(async () => {
   if (state && state.duration > 0 && !state.paused) {
     currentPlayingPct = (state.position / state.duration) * 100;
     fillEl.style.width = `${currentPlayingPct}%`;
+
+    // Atualizar widget do now playing
+    const nowPlayingProgress = document.getElementById('now-playing-progress');
+    if (nowPlayingProgress) {
+      nowPlayingProgress.style.width = `${currentPlayingPct}%`;
+    }
+    const nowPlayingTime = document.getElementById('now-playing-time');
+    if (nowPlayingTime) {
+      const totalSec = Math.round(state.position / 1000);
+      const min = Math.floor(totalSec / 60);
+      const sec = totalSec % 60;
+      nowPlayingTime.textContent = `${min}:${String(sec).padStart(2, '0')}`;
+    }
 
     // Atualizar texto do botão
     const playBtn = tocandoRow.querySelector('[data-play-id]');

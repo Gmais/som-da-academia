@@ -40,6 +40,32 @@
       </div>
     </section>
 
+    <section class="now-playing" id="now-playing" hidden>
+      <div class="now-playing__current">
+        <img class="now-playing__cover" id="now-playing-cover" alt="Capa" />
+        <div class="now-playing__info">
+          <div class="now-playing__label">Tocando agora</div>
+          <div class="now-playing__title" id="now-playing-title">—</div>
+          <div class="now-playing__artist" id="now-playing-artist">—</div>
+          <div class="now-playing__progress">
+            <div class="now-playing__progress-bar" id="now-playing-progress"></div>
+          </div>
+          <div class="now-playing__time">
+            <span id="now-playing-time">0:00</span> / <span id="now-playing-duration">0:00</span>
+          </div>
+        </div>
+        <button class="btn btn--danger now-playing__delete" id="now-playing-delete" title="Remover música">✕</button>
+      </div>
+      <div class="now-playing__next">
+        <div class="now-playing__label">Próxima</div>
+        <img class="now-playing__next-cover" id="now-playing-next-cover" alt="Próxima" />
+        <div class="now-playing__next-info">
+          <div class="now-playing__next-title" id="now-playing-next-title">—</div>
+          <div class="now-playing__next-artist" id="now-playing-next-artist">—</div>
+        </div>
+      </div>
+    </section>
+
     <section class="strips" id="strips" aria-label="Contextos e filas de sugestão">
       <!-- preenchido via JS -->
     </section>
