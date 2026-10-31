@@ -558,7 +558,7 @@ qrImg.src = '/api/qrcode?' + Date.now();
 tickClock();
 setInterval(tickClock, 1000 * 10);
 loadQueue();
-setInterval(loadQueue, 1000 * 15);
+setInterval(loadQueue, 1000 * 5); // sincroniza a cada 5s para detectar rápido quando outro PC marca algo como tocando
 
 // --- Adicionar música direto (busca independente da fila, não é afetada pelo auto-refresh) ---
 
