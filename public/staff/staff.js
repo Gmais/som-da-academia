@@ -286,30 +286,6 @@ async function loadQueue() {
   const res = await fetch(`/api/queue${qs}`);
   const data = await res.json();
   render(data);
-
-  // Se é o Player Oficial, detecta quando outra aba marcou algo como "tocando" e toca
-  if (isOfficial && spotifyPlayer && spotifyDeviceId) {
-    const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
-    if (tocandoRow) {
-      const queueItemId = tocandoRow.dataset.id;
-      const currentState = await spotifyPlayer.getCurrentState();
-
-      // Se nada está tocando ou está tocando algo diferente, toca o "tocando"
-      if (!currentState || !currentState.track_window.current_track ||
-          currentState.track_window.current_track.id !== tocandoRow.dataset.trackId) {
-        try {
-          const playRes = await fetch('/api/spotify/play', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId, clientId }),
-          });
-          if (!playRes.ok) console.error('Erro ao tocar via controle remoto:', await playRes.json());
-        } catch (e) {
-          console.error('Erro no controle remoto:', e);
-        }
-      }
-    }
-  }
 }
 
 strips.addEventListener('click', async (e) => {
