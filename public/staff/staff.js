@@ -918,7 +918,7 @@ setInterval(refreshOfficialOwner, 1000 * 3);
 checkSpotifyStatus();
 setInterval(checkSpotifyStatus, 1000 * 20);
 
-// Atualizar widget do now playing
+// Atualizar widget do now playing (visível em qualquer aba, mostrando o que está tocando no player oficial)
 function updateNowPlayingWidget() {
   const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
   const nowPlayingEl = document.getElementById('now-playing');
@@ -928,6 +928,7 @@ function updateNowPlayingWidget() {
     return;
   }
 
+  // Mostra o widget em qualquer aba (não só no player oficial)
   if (nowPlayingEl) nowPlayingEl.hidden = false;
 
   document.getElementById('now-playing-title').textContent = tocandoRow.querySelector('.track-row__name')?.textContent || '—';
