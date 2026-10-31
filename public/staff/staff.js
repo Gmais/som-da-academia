@@ -972,6 +972,9 @@ setInterval(async () => {
   const fillEl = document.getElementById(`progress-${queueItemId}`);
   if (!fillEl) return;
 
+  // Atualizar widget do now playing
+  updateNowPlayingWidget();
+
   const state = await spotifyPlayer.getCurrentState();
   if (state && state.duration > 0 && !state.paused) {
     currentPlayingPct = (state.position / state.duration) * 100;
