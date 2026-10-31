@@ -121,14 +121,27 @@ router.get('/token', async (req, res, next) => {
   }
 });
 
-// POST /api/spotify/play -> resolve o URI exato e manda tocar no dispositivo
-router.post('/play', requireOfficial, async (req, res, next) => {
+// POST /api/spotify/play -> toca uma música (pode ser chamada por qualquer aba, mas só o player oficial consegue tocar)
+router.post('/play', async (req, res, next) => {
   try {
-    const { queueItemId, deviceId } = req.body;
+    const { queueItemId, deviceId, clientId } = req.body;
     if (!queueItemId || !deviceId) {
       return res.status(400).json({ erro: 'queueItemId e deviceId são obrigatórios.' });
     }
 
+    // Se a aba que chamou NÃO é o player oficial, apenas marca como "tocando" no banco
+    // e deixa o player oficial detectar e tocar
+    const officialOwnerId = await getOfficialOwner();
+    if (clientId && clientId !== officialOwnerId) {
+      // Aba não-oficial: apenas marca como "tocando"
+      const { rows: ctxRows } = await query('SELECT context_id FROM queue_items WHERE id = $1', [queueItemId]);
+      if (!ctxRows[0]) return res.status(404).json({ erro: 'Item não encontrado.' });
+
+      await query("UPDATE queue_items SET status = 'tocando', atualizado_em = $1 WHERE id = $2", [Date.now(), queueItemId]);
+      return res.json({ ok: true, message: 'Marcado como tocando. O player oficial vai tocar.' });
+    }
+
+    // Aba oficial (ou sem clientId): toca de verdade
     const { rows } = await query('SELECT * FROM queue_items WHERE id = $1', [queueItemId]);
     const item = rows[0];
     if (!item) return res.status(404).json({ erro: 'Item não encontrado.' });
@@ -141,7 +154,7 @@ router.post('/play', requireOfficial, async (req, res, next) => {
     } else {
       uri = await resolveTrackUri(item.nome, item.artista);
     }
-    
+
     if (!uri) {
       return res.status(404).json({ erro: 'Não encontramos essa música no catálogo do Spotify.' });
     }
