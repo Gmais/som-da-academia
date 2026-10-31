@@ -177,26 +177,31 @@ router.post('/play-next', requireOfficial, async (req, res, next) => {
       return res.status(400).json({ erro: 'Faltam dados obrigatórios.' });
     }
 
-    // Primeiro, marca as músicas "tocando" desse contexto como "tocada"
-    await query("UPDATE queue_items SET status = 'tocada', atualizado_em = $1 WHERE context_id = $2 AND status = 'tocando'", [Date.now(), contextId]);
-
-    // Busca as pendentes
+    // Busca as pendentes ANTES de marcar como tocada
     const orderBy = random ? 'RANDOM()' : 'criado_em ASC';
     const { rows } = await query(`SELECT * FROM queue_items WHERE context_id = $1 AND status = 'pendente' ORDER BY ${orderBy} LIMIT 1`, [contextId]);
-    
+
     if (rows.length === 0) {
+      // Se não há próxima, pausa em vez de deixar a música anterior repetindo
+      await fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${await getValidAccessToken()}` },
+      }).catch(err => console.error('Erro ao pausar:', err));
       return res.json({ message: 'Fila vazia.' });
     }
     const nextItem = rows[0];
 
-    // Toca
+    // Marca a música anterior como "tocada" APENAS depois de confirmar que há próxima
+    await query("UPDATE queue_items SET status = 'tocada', atualizado_em = $1 WHERE context_id = $2 AND status = 'tocando'", [Date.now(), contextId]);
+
+    // Toca a próxima
     let uri;
     if (nextItem.track_id && nextItem.track_id.length === 22 && /^[a-zA-Z0-9]+$/.test(nextItem.track_id)) {
       uri = `spotify:track:${nextItem.track_id}`;
     } else {
       uri = await resolveTrackUri(nextItem.nome, nextItem.artista);
     }
-    
+
     if (!uri) return res.status(404).json({ erro: 'Não achou URI' });
 
     const token = await getValidAccessToken();
