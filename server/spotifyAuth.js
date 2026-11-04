@@ -147,21 +147,100 @@ async function getAppAccessToken() {
   return cachedAppToken;
 }
 
-async function resolveTrackUri(nome, artista) {
+function normalizeText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Escolhe, entre os resultados do Spotify, o que melhor casa com "nome + artista"
+ * vindos do catálogo (Deezer). Empates preferem a versão NÃO explícita (guardrail
+ * de conteúdo) e depois a ordem original do Spotify (relevância).
+ */
+function pickBestTrack(items, nome, artista) {
+  const n = normalizeText(nome);
+  const a = normalizeText(artista);
+  const scored = items.map((t, i) => {
+    let score = 0;
+    const tn = normalizeText(t.name);
+    if (tn === n) score += 4;
+    else if (tn && n && (tn.startsWith(n) || n.startsWith(tn))) score += 2;
+    const artistMatch = (t.artists || []).some((x) => {
+      const xa = normalizeText(x.name);
+      return xa && a && (xa === a || a.includes(xa) || xa.includes(a));
+    });
+    if (artistMatch) score += 3;
+    if (!t.explicit) score += 1.5;
+    return { t, score, i };
+  });
+  scored.sort((x, y) => y.score - x.score || x.i - y.i);
+  return scored[0] ? scored[0].t : null;
+}
+
+async function searchSpotify(q) {
   const token = await getAppAccessToken();
   const url = new URL('https://api.spotify.com/v1/search');
-  url.searchParams.set('q', `${nome} ${artista}`);
+  url.searchParams.set('q', q);
   url.searchParams.set('type', 'track');
-  url.searchParams.set('limit', '10');
-
+  url.searchParams.set('limit', '10'); // máximo permitido no Development Mode
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Falha na busca do Spotify: ${res.status} ${text}`);
+    const err = new Error(`Falha na busca do Spotify: ${res.status} ${text}`);
+    err.status = res.status;
+    throw err;
   }
   const data = await res.json();
-  const track = data.tracks?.items?.[0];
+  return data.tracks?.items || [];
+}
+
+async function resolveTrackUri(nome, artista) {
+  const clean = (s) => String(s || '').replace(/["]/g, ' ').trim();
+  // 1) busca com filtros de campo (mais precisa); 2) busca livre como fallback
+  let items = await searchSpotify(`track:"${clean(nome)}" artist:"${clean(artista)}"`);
+  if (!items.length) items = await searchSpotify(`${clean(nome)} ${clean(artista)}`);
+  const track = pickBestTrack(items, nome, artista);
   return track ? track.uri : null;
+}
+
+/**
+ * Chamada genérica à Web API do Spotify com o token do usuário conectado.
+ * Nunca lança por status HTTP — devolve { ok, status, data, text, retryAfter }
+ * para o chamador decidir. Lança só se não houver token.
+ */
+async function spotifyApi(method, path, { query: qs, body } = {}) {
+  const token = await getValidAccessToken();
+  if (!token) {
+    const err = new Error('Spotify não conectado ainda.');
+    err.status = 409;
+    throw err;
+  }
+  const url = new URL(`https://api.spotify.com/v1${path}`);
+  for (const [k, v] of Object.entries(qs || {})) {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+  }
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* corpo não-JSON */ }
+  return {
+    ok: res.ok || res.status === 204,
+    status: res.status,
+    data,
+    text,
+    retryAfter: Number(res.headers.get('retry-after')) || null,
+  };
 }
 
 module.exports = {
@@ -171,4 +250,6 @@ module.exports = {
   isConnected,
   resolveTrackUri,
   getAppAccessToken,
+  spotifyApi,
+  pickBestTrack,
 };

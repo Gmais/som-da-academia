@@ -20,6 +20,9 @@ router.get('/reset-diario', async (req, res, next) => {
       [Date.now()]
     );
 
+    // A "próxima" guardada no modo aleatório pode ter sido um item que acabou de voltar para a fila
+    await query('UPDATE player_state SET next_item_id = NULL WHERE id = 1');
+
     console.log(`[reset-diario] ${rowCount} músicas voltaram para a fila (pendente).`);
     res.json({ ok: true, resetadas: rowCount });
   } catch (err) {

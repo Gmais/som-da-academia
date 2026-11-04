@@ -97,6 +97,34 @@ function ensureSchema() {
         END $$;
       `);
 
+      // Colunas do controle remoto do Player Oficial (todas aditivas e idempotentes):
+      //  - player_state: device_id do player oficial + último estado reportado por ele
+      //  - contexts.aleatorio: "Tocar Aleatório" agora vale para todas as telas (antes era localStorage)
+      //  - queue_items.spotify_uri: cache da URI resolvida (evita buscar no Spotify a cada play)
+      // Só altera as tabelas se faltar alguma coluna: ALTER TABLE pega trava na tabela,
+      // e em serverless várias instâncias sobem ao mesmo tempo.
+      const { rows: jaMigrado } = await pool.query(`
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE (table_name = 'player_state' AND column_name = 'volume')
+           OR (table_name = 'contexts' AND column_name = 'aleatorio')
+           OR (table_name = 'queue_items' AND column_name = 'spotify_uri')
+      `);
+      if (jaMigrado.length < 3) {
+        await pool.query(`
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS device_id TEXT;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT TRUE;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS position_ms BIGINT NOT NULL DEFAULT 0;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS duration_ms BIGINT NOT NULL DEFAULT 0;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS reported_em BIGINT NOT NULL DEFAULT 0;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS last_seen_em BIGINT NOT NULL DEFAULT 0;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS next_item_id INTEGER;
+          ALTER TABLE player_state ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 80;
+          ALTER TABLE contexts ADD COLUMN IF NOT EXISTS aleatorio BOOLEAN NOT NULL DEFAULT FALSE;
+          ALTER TABLE queue_items ADD COLUMN IF NOT EXISTS spotify_uri TEXT;
+        `);
+      }
+      await pool.query('INSERT INTO player_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING');
+
       const { rows } = await pool.query('SELECT COUNT(*) AS n FROM contexts');
       if (Number(rows[0].n) === 0) {
         await pool.query(
@@ -109,7 +137,13 @@ function ensureSchema() {
         );
         console.log('Contextos padrão criados. Edite os horários no painel quando quiser.');
       }
-    })();
+    })().catch((err) => {
+      // Se a criação do schema falhar (ex.: banco fora do ar no cold start),
+      // NÃO guarda a promise rejeitada — senão toda query seguinte falharia
+      // até a instância serverless ser reciclada.
+      schemaReady = null;
+      throw err;
+    });
   }
   return schemaReady;
 }

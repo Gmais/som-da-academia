@@ -46,26 +46,31 @@ function renderResults(resultados) {
     .map(
       (r) => `
       <div class="result">
-        <img class="result__cover" src="${r.capaUrl || ''}" alt="" loading="lazy" />
+        <img class="result__cover" src="${escapeHtml(r.capaUrl || '')}" alt="" loading="lazy" />
         <div class="result__info">
           <div class="result__name">${escapeHtml(r.nome)}</div>
           <div class="result__artist">${escapeHtml(r.artista)}</div>
         </div>
         <span class="result__duration">${fmtDuration(r.duracaoMs)}</span>
-        <button data-track-id="${r.trackId}"
+        <button data-track-id="${escapeHtml(r.trackId)}"
                 data-nome="${escapeHtml(r.nome)}"
                 data-artista="${escapeHtml(r.artista)}"
-                data-capa="${r.capaUrl || ''}"
-                data-duracao="${r.duracaoMs || ''}">Sugerir</button>
+                data-capa="${escapeHtml(r.capaUrl || '')}"
+                data-duracao="${escapeHtml(r.duracaoMs || '')}">Sugerir</button>
       </div>`
     )
     .join('');
 }
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+// Escapa também aspas: os textos vão para dentro de atributos (data-nome="...") e
+// um título com " (ex.: "Heroes") quebrava o botão Sugerir.
+function escapeHtml(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 searchInput.addEventListener('input', () => {

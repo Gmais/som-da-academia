@@ -7,9 +7,15 @@ const {
   getValidAccessToken,
   isConnected,
   resolveTrackUri,
+  spotifyApi,
 } = require('../spotifyAuth');
+const { searchTracks } = require('../catalog');
+const { mapLimit } = require('../util');
 
 const router = express.Router();
+
+const OAUTH_STATE_COOKIE = 'sda_oauth_state';
+const MAX_IMPORT = 200;
 
 // GET /api/spotify/status -> a academia já conectou a conta Premium?
 router.get('/status', async (req, res, next) => {
@@ -20,69 +26,12 @@ router.get('/status', async (req, res, next) => {
   }
 });
 
-// --- Player Oficial: só uma tela (clientId) pode tocar; as outras só controlam ---
-
-async function getOfficialOwner() {
-  const { rows } = await query('SELECT owner_id FROM player_state WHERE id = 1');
-  return rows[0]?.owner_id || null;
-}
-
-// GET /api/spotify/official -> qual tela é o Player Oficial agora
-router.get('/official', async (req, res, next) => {
-  try {
-    res.json({ ownerId: await getOfficialOwner() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PUT /api/spotify/official -> esta tela vira o Player Oficial (as outras perdem o posto)
-router.put('/official', async (req, res, next) => {
-  try {
-    const { clientId } = req.body;
-    if (!clientId) return res.status(400).json({ erro: 'clientId é obrigatório.' });
-    await query(
-      `INSERT INTO player_state (id, owner_id, atualizado_em) VALUES (1, $1, $2)
-       ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id, atualizado_em = EXCLUDED.atualizado_em`,
-      [clientId, Date.now()]
-    );
-    res.json({ ownerId: clientId });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// DELETE /api/spotify/official -> esta tela deixa de ser o Player Oficial (só se ainda for a dona)
-router.delete('/official', async (req, res, next) => {
-  try {
-    const { clientId } = req.body;
-    if (!clientId) return res.status(400).json({ erro: 'clientId é obrigatório.' });
-    await query(
-      'UPDATE player_state SET owner_id = NULL, atualizado_em = $1 WHERE id = 1 AND owner_id = $2',
-      [Date.now(), clientId]
-    );
-    res.json({ ownerId: await getOfficialOwner() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Barreira no servidor: só o Player Oficial pode mandar tocar
-async function requireOfficial(req, res, next) {
-  try {
-    const { clientId } = req.body;
-    if (!clientId || clientId !== (await getOfficialOwner())) {
-      return res.status(403).json({ erro: 'Esta tela não é o Player Oficial. Ative "Player Oficial" aqui para tocar.' });
-    }
-    next();
-  } catch (err) {
-    next(err);
-  }
-}
-
 // GET /api/spotify/login -> inicia o fluxo OAuth, redireciona pro Spotify
 router.get('/login', (req, res) => {
   const state = nanoid();
+  // O mesmo valor volta na URL do callback; comparar com o cookie impede que alguém
+  // conecte outra conta Spotify ao painel usando um link forjado.
+  res.cookie(OAUTH_STATE_COOKIE, state, { maxAge: 10 * 60 * 1000, httpOnly: true, sameSite: 'lax' });
   res.redirect(getAuthorizeUrl(state));
 });
 
@@ -99,9 +48,14 @@ router.get('/logout', async (req, res, next) => {
 // GET /api/spotify/callback -> o Spotify volta pra cá depois do login
 router.get('/callback', async (req, res, next) => {
   try {
-    const { code, error } = req.query;
+    const { code, error, state } = req.query;
     if (error) {
       return res.redirect(`/staff?spotify_erro=${encodeURIComponent(error)}`);
+    }
+    const expected = req.cookies && req.cookies[OAUTH_STATE_COOKIE];
+    res.clearCookie(OAUTH_STATE_COOKIE);
+    if (!code || !state || !expected || state !== expected) {
+      return res.redirect('/staff?spotify_erro=' + encodeURIComponent('login_invalido'));
     }
     await exchangeCodeForToken(code);
     res.redirect('/staff?spotify_conectado=1');
@@ -110,7 +64,7 @@ router.get('/callback', async (req, res, next) => {
   }
 });
 
-// GET /api/spotify/token -> token de acesso pro Web Playback SDK (front-end)
+// GET /api/spotify/token -> token de acesso pro Web Playback SDK (só o Player Oficial usa)
 router.get('/token', async (req, res, next) => {
   try {
     const token = await getValidAccessToken();
@@ -121,253 +75,90 @@ router.get('/token', async (req, res, next) => {
   }
 });
 
-// POST /api/spotify/play -> toca uma música (pode ser chamada por qualquer aba, mas só o player oficial consegue tocar)
-router.post('/play', async (req, res, next) => {
-  try {
-    const { queueItemId, deviceId, clientId } = req.body;
-    if (!queueItemId || !deviceId) {
-      return res.status(400).json({ erro: 'queueItemId e deviceId são obrigatórios.' });
-    }
-
-    // Se a aba que chamou NÃO é o player oficial, apenas marca como "tocando" no banco
-    // e deixa o player oficial detectar e tocar
-    const officialOwnerId = await getOfficialOwner();
-    if (clientId && clientId !== officialOwnerId) {
-      // Aba não-oficial: apenas marca como "tocando"
-      const { rows: ctxRows } = await query('SELECT context_id FROM queue_items WHERE id = $1', [queueItemId]);
-      if (!ctxRows[0]) return res.status(404).json({ erro: 'Item não encontrado.' });
-
-      await query("UPDATE queue_items SET status = 'tocando', atualizado_em = $1 WHERE id = $2", [Date.now(), queueItemId]);
-      return res.json({ ok: true, message: 'Marcado como tocando. O player oficial vai tocar.' });
-    }
-
-    // Aba oficial (ou sem clientId): toca de verdade
-    const { rows } = await query('SELECT * FROM queue_items WHERE id = $1', [queueItemId]);
-    const item = rows[0];
-    if (!item) return res.status(404).json({ erro: 'Item não encontrado.' });
-
-    let uri;
-    // Se o track_id for um ID válido do Spotify (22 caracteres alfanuméricos), usamos direto.
-    // Isso evita o rate limit (429) na rota de busca.
-    if (item.track_id && item.track_id.length === 22 && /^[a-zA-Z0-9]+$/.test(item.track_id)) {
-      uri = `spotify:track:${item.track_id}`;
-    } else {
-      uri = await resolveTrackUri(item.nome, item.artista);
-    }
-
-    if (!uri) {
-      return res.status(404).json({ erro: 'Não encontramos essa música no catálogo do Spotify.' });
-    }
-
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
-
-    const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ uris: [uri] }),
-    });
-
-    if (!playRes.ok && playRes.status !== 204) {
-      const text = await playRes.text();
-      return res.status(502).json({ erro: `Spotify recusou o comando de tocar: ${text}` });
-    }
-
-    res.json({ ok: true, uri });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/spotify/play-next -> Toca a próxima música (aleatória ou sequencial)
-router.post('/play-next', requireOfficial, async (req, res, next) => {
-  try {
-    const { contextId, deviceId, random } = req.body;
-    if (!contextId || !deviceId) {
-      return res.status(400).json({ erro: 'Faltam dados obrigatórios.' });
-    }
-
-    // Busca as pendentes ANTES de marcar como tocada
-    const orderBy = random ? 'RANDOM()' : 'criado_em ASC';
-    const { rows } = await query(`SELECT * FROM queue_items WHERE context_id = $1 AND status = 'pendente' ORDER BY ${orderBy} LIMIT 1`, [contextId]);
-
-    if (rows.length === 0) {
-      // Se não há próxima, pausa em vez de deixar a música anterior repetindo
-      await fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${await getValidAccessToken()}` },
-      }).catch(err => console.error('Erro ao pausar:', err));
-      return res.json({ message: 'Fila vazia.' });
-    }
-    const nextItem = rows[0];
-
-    // Marca a música anterior como "tocada" APENAS depois de confirmar que há próxima
-    await query("UPDATE queue_items SET status = 'tocada', atualizado_em = $1 WHERE context_id = $2 AND status = 'tocando'", [Date.now(), contextId]);
-
-    // Toca a próxima
-    let uri;
-    if (nextItem.track_id && nextItem.track_id.length === 22 && /^[a-zA-Z0-9]+$/.test(nextItem.track_id)) {
-      uri = `spotify:track:${nextItem.track_id}`;
-    } else {
-      uri = await resolveTrackUri(nextItem.nome, nextItem.artista);
-    }
-
-    if (!uri) return res.status(404).json({ erro: 'Não achou URI' });
-
-    const token = await getValidAccessToken();
-    const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ uris: [uri] }),
-    });
-
-    if (playRes.ok || playRes.status === 204) {
-      await query("UPDATE queue_items SET status = 'tocando', atualizado_em = $1 WHERE id = $2", [Date.now(), nextItem.id]);
-      return res.json({ ok: true });
-    } else {
-      return res.status(502).json({ erro: 'Erro do Spotify' });
-    }
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/spotify/pause -> pausa o playback
-router.post('/pause', async (req, res, next) => {
-  try {
-    const { deviceId } = req.body;
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
-
-    const url = deviceId
-      ? `https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`
-      : 'https://api.spotify.com/v1/me/player/pause';
-
-    const pauseRes = await fetch(url, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!pauseRes.ok && pauseRes.status !== 204) {
-      const text = await pauseRes.text();
-      return res.status(502).json({ erro: `Spotify recusou o comando de pausar: ${text}` });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /api/spotify/playlist -> cria uma playlist no Spotify com a fila de um contexto
 router.post('/playlist', async (req, res, next) => {
   try {
-    const { contextId } = req.body;
-    if (!contextId) return res.status(400).json({ erro: 'contextId é obrigatório.' });
+    const contextId = Number(req.body.contextId);
+    if (!Number.isInteger(contextId) || contextId <= 0) {
+      return res.status(400).json({ erro: 'contextId é obrigatório.' });
+    }
 
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
+    if (!(await isConnected())) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
 
-    // 1. Obter perfil do usuário (para pegar o ID)
-    const meRes = await fetch('https://api.spotify.com/v1/me', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!meRes.ok) return res.status(502).json({ erro: 'Falha ao obter perfil do Spotify.' });
-    const meData = await meRes.json();
-    const userId = meData.id;
-
-    // 2. Obter nome do contexto
     const { rows: ctxRows } = await query('SELECT nome FROM contexts WHERE id = $1', [contextId]);
     if (!ctxRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
     const ctxName = ctxRows[0].nome;
 
-    // 3. Obter as músicas da fila (pendente, tocando, tocada)
+    // Músicas da lista (pendente, tocando, tocada)
     const { rows: tracks } = await query(
-      `SELECT track_id FROM queue_items
+      `SELECT id, track_id, nome, artista, spotify_uri FROM queue_items
        WHERE context_id = $1 AND status IN ('pendente', 'tocando', 'tocada')
-       ORDER BY (status = 'tocando') DESC, criado_em ASC`,
+       ORDER BY (status = 'tocando') DESC, criado_em ASC, id ASC`,
       [contextId]
     );
-
     if (tracks.length === 0) {
       return res.status(400).json({ erro: 'Não há músicas na fila desse contexto para criar uma playlist.' });
     }
 
-    const uris = tracks.map((t) => `spotify:track:${t.track_id}`);
+    // O banco guarda IDs do Deezer; o Spotify precisa da URI dele. Resolve (e guarda) as que faltam.
+    const resolved = await mapLimit(tracks, 4, async (t) => {
+      if (t.spotify_uri) return t.spotify_uri;
+      let uri = null;
+      if (t.track_id && /^[a-zA-Z0-9]{22}$/.test(t.track_id)) uri = `spotify:track:${t.track_id}`;
+      else uri = await resolveTrackUri(t.nome, t.artista);
+      if (uri) await query('UPDATE queue_items SET spotify_uri = $1 WHERE id = $2', [uri, t.id]);
+      return uri;
+    });
 
-    // 4. Criar a playlist
-    const createRes = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const uris = [];
+    const naoEncontradas = [];
+    resolved.forEach((r, i) => {
+      if (r.ok && r.valor) {
+        if (!uris.includes(r.valor)) uris.push(r.valor);
+      } else {
+        naoEncontradas.push(`${tracks[i].nome} - ${tracks[i].artista}`);
+      }
+    });
+    if (uris.length === 0) {
+      return res.status(404).json({ erro: 'Não encontramos nenhuma dessas músicas no Spotify.' });
+    }
+
+    // Criar a playlist (endpoint atual da API; /users/{id}/playlists foi removido em 2026)
+    const created = await spotifyApi('POST', '/me/playlists', {
+      body: {
         name: `Academia: ${ctxName}`,
         description: `Playlist gerada automaticamente pelo Som da Academia em ${new Date().toLocaleDateString('pt-BR')}`,
         public: true,
-      }),
+      },
     });
-
-    if (!createRes.ok) {
-      const text = await createRes.text();
-      return res.status(502).json({ erro: `Falha ao criar playlist: ${text}` });
+    if (!created.ok) {
+      return res.status(502).json({ erro: `Falha ao criar playlist: ${created.text}` });
     }
-    const playlistData = await createRes.json();
-    const playlistId = playlistData.id;
+    const playlistId = created.data && created.data.id;
+    if (!playlistId) return res.status(502).json({ erro: 'O Spotify não devolveu o ID da playlist criada.' });
 
-    // 5. Adicionar músicas à playlist (lotes de 100)
+    // Adicionar as músicas (lotes de 100; /playlists/{id}/tracks foi renomeado para /items)
+    let adicionadas = 0;
     for (let i = 0; i < uris.length; i += 100) {
       const chunk = uris.slice(i, i + 100);
-      await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ uris: chunk }),
-      });
-    }
-
-    res.json({ ok: true, url: playlistData.external_urls.spotify });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/spotify/my-playlists -> lista as playlists do usuário conectado
-router.get('/my-playlists', async (req, res, next) => {
-  try {
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado. Conecte sua conta primeiro.' });
-
-    let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
-    let playlists = [];
-
-    while (url) {
-      const pRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!pRes.ok) {
-        const text = await pRes.text();
-        return res.status(502).json({ erro: `Falha ao buscar playlists: ${text}` });
+      const added = await spotifyApi('POST', `/playlists/${playlistId}/items`, { body: { uris: chunk } });
+      if (!added.ok) {
+        return res.status(502).json({
+          erro: `A playlist foi criada, mas o Spotify recusou adicionar as músicas: ${added.text}`,
+          url: created.data.external_urls && created.data.external_urls.spotify,
+        });
       }
-      const data = await pRes.json();
-      playlists.push(...data.items.filter(Boolean).map(pl => ({
-        id: pl.id,
-        nome: pl.name,
-        total: pl.tracks?.total || 0,
-        capa: pl.images?.[0]?.url || null,
-      })));
-      url = data.next;
+      adicionadas += chunk.length;
     }
 
-    res.json({ ok: true, playlists });
+    res.json({
+      ok: true,
+      url: created.data.external_urls && created.data.external_urls.spotify,
+      adicionadas,
+      naoEncontradas,
+    });
   } catch (err) {
+    if (err && err.status === 409) return res.status(409).json({ erro: err.message });
     next(err);
   }
 });
@@ -375,97 +166,68 @@ router.get('/my-playlists', async (req, res, next) => {
 // POST /api/spotify/mass-import-text -> pesquisa várias músicas por texto e adiciona
 router.post('/mass-import-text', async (req, res, next) => {
   try {
-    const { contextId, queries } = req.body;
-    if (!contextId || !Array.isArray(queries) || queries.length === 0) {
+    const contextId = Number(req.body.contextId);
+    const rawQueries = req.body.queries;
+    if (!Number.isInteger(contextId) || contextId <= 0 || !Array.isArray(rawQueries) || rawQueries.length === 0) {
       return res.status(400).json({ erro: 'contextId e array de queries são obrigatórios.' });
     }
+    const queries = rawQueries
+      .map((q) => (typeof q === 'string' ? q.trim() : ''))
+      .filter(Boolean)
+      .slice(0, MAX_IMPORT);
+    if (queries.length === 0) return res.status(400).json({ erro: 'Nenhuma linha válida para importar.' });
 
-    const { searchTracks } = require('../catalog');
+    const { rows: ctxRows } = await query('SELECT id FROM contexts WHERE id = $1', [contextId]);
+    if (!ctxRows[0]) return res.status(404).json({ erro: 'Contexto não encontrado.' });
 
-    let importedCount = 0;
-    const agora = Date.now();
-
-    for (const q of queries) {
-      if (!q) continue;
-
-      try {
-        const resultados = await searchTracks(q, 1);
-        if (resultados && resultados.length > 0) {
-          const track = resultados[0];
-          
-          await query(
-            `INSERT INTO queue_items
-              (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
-             VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7, $7)`,
-            [contextId, track.trackId, track.nome, track.artista, track.capaUrl, track.duracaoMs, agora]
-          );
-          importedCount++;
-        }
-      } catch (err) {
-        // ignora erros individuais pra não parar a importação inteira
-      }
-    }
-
-    res.json({ ok: true, importedCount });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PUT /api/spotify/volume -> ajusta o volume no dispositivo ativo do Spotify
-router.put('/volume', async (req, res, next) => {
-  try {
-    const { volume_percent } = req.body;
-    if (volume_percent == null || volume_percent < 0 || volume_percent > 100) {
-      return res.status(400).json({ erro: 'volume_percent deve ser entre 0 e 100.' });
-    }
-
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
-
-    const volRes = await fetch(
-      `https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(volume_percent)}`,
-      {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    if (!volRes.ok && volRes.status !== 204) {
-      const text = await volRes.text();
-      return res.status(502).json({ erro: `Spotify recusou o comando de volume: ${text}` });
-    }
-
-    res.json({ ok: true, volume_percent: Math.round(volume_percent) });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/spotify/volume -> lê o volume atual do dispositivo ativo
-router.get('/volume', async (req, res, next) => {
-  try {
-    const token = await getValidAccessToken();
-    if (!token) return res.status(409).json({ erro: 'Spotify não conectado ainda.' });
-
-    const stateRes = await fetch('https://api.spotify.com/v1/me/player', {
-      headers: { Authorization: `Bearer ${token}` },
+    // Duas buscas simultâneas no máximo: o Deezer bloqueia rajadas (50 por 5 s)
+    const results = await mapLimit(queries, 2, async (q) => {
+      const found = await searchTracks(q, 5); // pega mais de 1 porque a versão explícita é descartada
+      return found[0] || null;
     });
 
-    // 204 = nenhum dispositivo ativo
-    if (stateRes.status === 204) {
-      return res.json({ volume_percent: null, device: null });
+    const { rows: existing } = await query(
+      "SELECT track_id FROM queue_items WHERE context_id = $1 AND status <> 'removida'",
+      [contextId]
+    );
+    const seen = new Set(existing.map((r) => r.track_id));
+
+    const toInsert = [];
+    const naoEncontradas = [];
+    let duplicadas = 0;
+    let falhas = 0;
+    results.forEach((r, i) => {
+      if (!r.ok) { falhas++; return; }
+      if (!r.valor) { naoEncontradas.push(queries[i]); return; }
+      if (seen.has(r.valor.trackId)) { duplicadas++; return; }
+      seen.add(r.valor.trackId);
+      toInsert.push(r.valor);
+    });
+
+    if (toInsert.length) {
+      // criado_em crescente preserva a ordem em que o texto foi colado
+      const agora = Date.now();
+      const params = [];
+      const tuples = toInsert.map((t, i) => {
+        const base = params.length;
+        params.push(contextId, t.trackId, t.nome, t.artista, t.capaUrl, t.duracaoMs, agora + i);
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, 'pendente', $${base + 7}, $${base + 7})`;
+      });
+      await query(
+        `INSERT INTO queue_items
+          (context_id, track_id, nome, artista, capa_url, duracao_ms, status, criado_em, atualizado_em)
+         VALUES ${tuples.join(', ')}`,
+        params
+      );
     }
 
-    if (!stateRes.ok) {
-      const text = await stateRes.text();
-      return res.status(502).json({ erro: `Falha ao ler estado do player: ${text}` });
-    }
-
-    const data = await stateRes.json();
     res.json({
-      volume_percent: data.device?.volume_percent ?? null,
-      device: data.device?.name ?? null,
+      ok: true,
+      importedCount: toInsert.length,
+      total: queries.length,
+      duplicadas,
+      falhas,
+      naoEncontradas,
     });
   } catch (err) {
     next(err);

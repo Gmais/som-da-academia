@@ -18,9 +18,16 @@ Sistema com dois lados:
 - Geração de QR code pra imprimir/exibir perto da recepção.
 - Pronto pra rodar tanto localmente (PC da recepção) quanto como função serverless no Vercel — é o mesmo código nos dois casos.
 
-## O que NÃO está pronto (de propósito)
+## Player Oficial e controle remoto
 
-Sem o Spotify Premium da academia ainda, o sistema **não toca música automaticamente** — ele só organiza a fila. O staff vê a fila no painel, clica em "Abrir" pra abrir a música no Spotify (ou no player que vocês já usam) e toca manualmente. Quando tiver o Premium/Business, dá pra evoluir pra controle automático via Spotify Connect.
+O som é tocado pelo Spotify da academia (conta **Premium** conectada em "Conectar Spotify"). Várias telas do painel podem estar abertas ao mesmo tempo (recepção, sala de treino, celular do professor), mas **só uma toca** — a que estiver com o botão **Player Oficial: ON**.
+
+- Ligar o Player Oficial numa tela desliga automaticamente nas outras. Se a música estava tocando, ela **continua** na nova tela, de onde parou.
+- **Qualquer tela** (oficial ou não) controla o som: tocar uma música, pausar/continuar, pular, ajustar o volume, excluir a música (ou a próxima), trocar de lista, ligar o modo aleatório. O servidor guarda o dispositivo do Player Oficial e comanda o Spotify direto, então não depende de qual aba está aberta.
+- O **player no topo** (em todas as telas, em qualquer lista aberta) mostra a música tocando, o progresso e a **próxima** — no modo aleatório a "próxima" mostrada é exatamente a que vai tocar.
+- **Auto-DJ**: quando a música está para acabar, o Player Oficial passa para a próxima da lista (aleatória ou na ordem). Por padrão a troca acontece nos **últimos 5 segundos** para não ter silêncio entre as músicas (`ANTECIPAR_FIM_MS` no topo de `public/staff/staff.js`; `0` toca até o último segundo). A última música da lista sempre toca até o fim.
+- Se a tela oficial for fechada, as outras mostram "Player Oficial offline" e os botões de tocar explicam o que fazer.
+- À meia-noite (23:59, horário de Brasília) um cron devolve todas as músicas à fila (`/api/cron/reset-diario`). Defina `CRON_SECRET` para que só o Vercel Cron consiga disparar.
 
 ## Estrutura do projeto
 
@@ -30,12 +37,18 @@ api/
 server/
   app.js            configuração do Express (rotas, middlewares) — sem chamar listen
   index.js          launcher local: importa app.js e chama listen (uso: npm start)
-  db.js             pool de conexão Postgres + criação automática do schema
-  contextHelper.js  lógica de "qual contexto está ativo agora" (fuso horário fixo)
-  spotify.js        busca no catálogo do Spotify (Client Credentials)
+  db.js             pool de conexão Postgres + criação/migração automática do schema
+  contextHelper.js  a lista fixa "Pedidos de Alunos" (recebe as sugestões do QR code)
+  catalog.js        busca de músicas (Deezer, sem conteúdo explícito)
+  spotifyAuth.js    login OAuth do Spotify, tokens, busca da música no Spotify, chamadas à Web API
+  player.js         núcleo do Player Oficial: quem toca, tocar/pular/pausar/volume, próxima música
+  util.js           helpers (concorrência limitada)
   routes/
-    contexts.js     listar/editar contextos (horários)
+    contexts.js     listar/criar/editar/excluir/reordenar listas, modo aleatório
     queue.js        listar fila, criar sugestão (com guardrails), staff atualiza status
+    player.js       /api/player: estado, controle remoto e posse do Player Oficial
+    spotifyAuth.js  conectar conta, token do SDK, criar playlist, importação em massa
+    cron.js         reset diário da fila
     search.js       proxy de busca pro frontend do aluno
     qrcode.js       gera o QR code em SVG
 public/
@@ -112,6 +125,6 @@ Depois do primeiro deploy, qualquer `git push` pra `main` publica uma nova vers�
 
 ## Próximos passos sugeridos
 
-1. **Playback automático**: quando tiver o Premium/Business, Authorization Code Flow + Spotify Connect pra tocar a fila automaticamente, sem o staff abrir o Spotify manualmente.
+1. **Proteger o painel com senha/PIN**: hoje `/staff` e `/api/*` (inclusive `/api/spotify/token`) não pedem login — quem souber a URL do painel controla o som.
 2. **Dashboard de reclamações**: registrar "alguém reclamou de X agora" no painel — em poucas semanas você teria dados reais de quais músicas/horários geram mais atrito.
 3. **Catálogo local**: hoje a busca é só Spotify. Pra incluir os arquivos locais, dá pra adicionar uma segunda fonte de busca com um catálogo cadastrado manualmente.

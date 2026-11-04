@@ -1,69 +1,646 @@
-const strips = document.getElementById('strips');
-const activeBanner = document.getElementById('active-context-name');
-const clockEl = document.getElementById('clock');
-const contextEditor = document.getElementById('context-editor');
-const qrImg = document.getElementById('qr-img');
-const addContextSelect = document.getElementById('add-context-select');
-const addSearchInput = document.getElementById('add-search-input');
-const addResultsEl = document.getElementById('add-results');
-const importContextSelect = document.getElementById('import-context-select');
-const importTextArea = document.getElementById('import-text-area');
-const importTextBtn = document.getElementById('import-text-btn');
-const importTextStatus = document.getElementById('import-text-status');
-const spotifyStatusEl = document.getElementById('spotify-status');
-const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
-const spotifyDisconnectBtn = document.getElementById('spotify-disconnect-btn');
-const spotifyPauseBtn = document.getElementById('spotify-pause-btn');
-const volumeSlider = document.getElementById('volume-slider');
-const volumeValueEl = document.getElementById('volume-value');
-const volumeIconEl = document.getElementById('volume-icon');
+'use strict';
 
-let spotifyDeviceId = null;
-let spotifyPlayer = null;
+/*
+ * Painel do staff.
+ *
+ * Modelo: todas as telas leem o MESMO estado do servidor (GET /api/player) e controlam o som
+ * chamando o servidor. Só a tela marcada como "Player Oficial" cria o player do Spotify
+ * (Web Playback SDK) e faz o som sair; ela apenas reporta posição/pausa e avisa quando a
+ * música está acabando. Ela nunca decide sozinha o que tocar — por isso não há mais
+ * disputa entre telas nem música "voltando ao começo".
+ */
 
-let knownContexts = [];
-let addDebounceTimer = null;
-let addLastQuery = '';
-let randomModes = JSON.parse(localStorage.getItem('sda_random_modes') || '{}');
-let currentPlayingPct = 0;
+const CFG = {
+  POLL_PLAYER_MS: 3000,    // estado do player (música atual, próxima, posição, volume, quem é o oficial)
+  POLL_QUEUE_MS: 15000,    // listas de músicas
+  POLL_SPOTIFY_MS: 20000,  // conexão com a conta Spotify
+  TICK_MS: 1000,           // progresso na tela + (no oficial) leitura do SDK
+  REPORT_MS: 4000,         // o oficial reporta posição/sinal de vida ao servidor
+  ANTECIPAR_FIM_MS: 5000,  // passa para a próxima faltando 5s (evita o silêncio entre músicas). 0 = só no fim.
+  MIN_DURACAO_ANTECIPAR_MS: 20000,
+};
 
-let viewingContextId = null; // null = segue o contexto ativo automaticamente
-let lastData = null;
+const NOME_LISTA_PEDIDOS = 'Pedidos de Alunos';
 
-// --- Player Oficial: só uma tela toca; as outras só controlam ---
+const $ = (id) => document.getElementById(id);
+const strips = $('strips');
+const activeBanner = $('active-context-name');
+const clockEl = $('clock');
+const contextEditor = $('context-editor');
+const qrImg = $('qr-img');
+const addContextSelect = $('add-context-select');
+const addSearchInput = $('add-search-input');
+const addResultsEl = $('add-results');
+const importContextSelect = $('import-context-select');
+const importTextArea = $('import-text-area');
+const importTextBtn = $('import-text-btn');
+const importTextStatus = $('import-text-status');
+const spotifyStatusEl = $('spotify-status');
+const spotifyConnectBtn = $('spotify-connect-btn');
+const spotifyDisconnectBtn = $('spotify-disconnect-btn');
+const officialBtn = $('official-player-btn');
+const volumeSlider = $('volume-slider');
+const volumeValueEl = $('volume-value');
+const volumeIconEl = $('volume-icon');
+const nowPlayingEl = $('now-playing');
+const toastEl = $('toast');
 
-const officialBtn = document.getElementById('official-player-btn');
+// ---------------------------------------------------------------- utilidades
 
-// Identifica esta aba (sobrevive a recarregar, não é compartilhada entre abas)
-function getClientId() {
+function escapeHtml(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '--:--';
+  return fmtClockMs(ms);
+}
+
+function fmtClockMs(ms) {
+  const totalSec = Math.max(0, Math.floor(Number(ms) / 1000));
+  return `${Math.floor(totalSec / 60)}:${String(totalSec % 60).padStart(2, '0')}`;
+}
+
+function levelDots(naFila, max = 5) {
+  const on = Math.min(naFila, max);
+  return Array.from({ length: max }, (_, i) => `<span class="${i < on ? 'on' : ''}"></span>`).join('');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let toastTimer = null;
+function toast(msg, tipo = 'ok') {
+  toastEl.textContent = msg;
+  toastEl.className = tipo === 'erro' ? 'toast toast--error' : 'toast';
+  toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, tipo === 'erro' ? 7000 : 4000);
+}
+
+// Nunca lança: erro de rede vira { ok:false, status:0 }
+async function api(method, url, body) {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* corpo vazio */ }
+    return { ok: res.ok, status: res.status, data: data || {} };
+  } catch {
+    return { ok: false, status: 0, data: { erro: 'Sem conexão com o servidor.' } };
+  }
+}
+
+// ------------------------------------------------- identidade desta tela
+
+const CHANNEL_NAME = 'sda_official_player';
+const channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null;
+
+function newClientId() {
+  return (window.crypto && crypto.randomUUID && crypto.randomUUID()) || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Identifica esta aba (sobrevive a recarregar; não é compartilhada entre abas)
+function readClientId() {
   try {
     let id = sessionStorage.getItem('sda_client_id');
     if (!id) {
-      id = (crypto.randomUUID && crypto.randomUUID()) || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      id = newClientId();
       sessionStorage.setItem('sda_client_id', id);
     }
     return id;
   } catch {
-    return `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return newClientId();
   }
 }
 
-const clientId = getClientId();
-let officialOwnerId = null;
-let isOfficial = false;
-const officialChannel = 'BroadcastChannel' in window ? new BroadcastChannel('sda_official_player') : null;
+let clientId = readClientId();
 
-// --- Volume do player (síncrono via API do Spotify) ---
-
-let volumeDebounceTimer = null;
-let volumeSyncPaused = false; // pausa a sincronização enquanto o usuário arrasta o slider
-let lastKnownVolume = null;   // último volume lido do Spotify (evita loop)
-
-function getSavedVolumePct() {
-  const raw = parseInt(localStorage.getItem('sda_volume'), 10);
-  if (Number.isNaN(raw)) return 80;
-  return Math.min(100, Math.max(0, raw));
+if (channel) {
+  channel.addEventListener('message', (ev) => {
+    const m = ev.data || {};
+    if (m.t === 'whois' && m.id === clientId) channel.postMessage({ t: 'iam', id: clientId });
+    if (m.t === 'changed') pollPlayer(true);
+  });
 }
+
+// "Duplicar aba" copia o sessionStorage — duas abas com o mesmo id se achariam, as duas, Player Oficial.
+async function ensureUniqueClientId() {
+  if (!channel) return;
+  let clash = false;
+  const onMsg = (ev) => {
+    if (ev.data && ev.data.t === 'iam' && ev.data.id === clientId) clash = true;
+  };
+  channel.addEventListener('message', onMsg);
+  channel.postMessage({ t: 'whois', id: clientId });
+  await sleep(250);
+  channel.removeEventListener('message', onMsg);
+  if (clash) {
+    clientId = newClientId();
+    try { sessionStorage.setItem('sda_client_id', clientId); } catch { /* sem storage */ }
+  }
+}
+
+// ------------------------------------------------------------------ estado
+
+let spotifyChecked = false;
+let spotifyConnected = false;
+let sdkReady = Boolean(window.__sdkReady);
+let spotifyPlayer = null;   // Spotify.Player — só existe na tela oficial
+let sdkDeviceId = null;
+let playerError = null;     // mensagem de erro do SDK nesta tela
+let isOfficial = false;
+let officialOwnerId = null;
+
+let snap = null;            // último GET /api/player + quando chegou (performance.now)
+let lastQueue = null;       // último GET /api/queue
+let viewingContextId = null; // null = lista padrão (Pedidos de Alunos)
+
+const playlistState = {};   // contextId -> { busy: bool, url: string }
+
+// ------------------------------------------------------- estado do player
+
+function snapPositionMs() {
+  if (!snap || !snap.nowPlaying) return 0;
+  let pos = Number(snap.positionMs) || 0;
+  if (!snap.paused) pos += performance.now() - snap.at;
+  const dur = snap.durationMs || snap.nowPlaying.duracaoMs || 0;
+  return dur > 0 ? Math.min(pos, dur) : pos;
+}
+
+let pollInFlight = null;
+// fresh = true: depois de uma ação, uma consulta já em andamento pode trazer o estado de ANTES dela.
+function pollPlayer(fresh = false) {
+  if (pollInFlight) {
+    return fresh ? pollInFlight.then(() => pollPlayer()) : pollInFlight;
+  }
+  pollInFlight = (async () => {
+    const r = await api('GET', '/api/player');
+    if (r.ok) applyPlayer(r.data);
+    return r.ok ? r.data : null;
+  })().finally(() => { pollInFlight = null; });
+  return pollInFlight;
+}
+
+function applyPlayer(data) {
+  const prevId = snap && snap.nowPlaying ? snap.nowPlaying.id : null;
+  snap = { ...data, at: performance.now() };
+  officialOwnerId = data.ownerId || null;
+
+  const nowOfficial = officialOwnerId === clientId;
+  if (nowOfficial !== isOfficial) {
+    isOfficial = nowOfficial;
+    applyOfficialRole();
+  }
+
+  const curId = data.nowPlaying ? data.nowPlaying.id : null;
+  if (curId !== prevId) {
+    advancingFor = null;     // música nova: libera um novo "acabou"
+    loadQueue();             // os status nas listas mudaram
+  }
+
+  renderWidget();
+  renderStatus();
+  renderVolume();
+  renderRowStates();
+  syncOfficialVolume();
+}
+
+// ------------------------------------------------------------ renderização
+
+function renderWidget() {
+  const np = snap && snap.nowPlaying;
+  nowPlayingEl.hidden = !np;
+  if (!np) return;
+
+  $('now-playing-title').textContent = np.nome || '—';
+  $('now-playing-artist').textContent = np.artista || '—';
+  const cover = $('now-playing-cover');
+  if (np.capaUrl) { cover.src = np.capaUrl; cover.hidden = false; } else { cover.removeAttribute('src'); cover.hidden = true; }
+
+  const label = snap.paused ? (snap.online || !snap.ownerId ? 'Pausada' : 'Player Oficial offline') : 'Tocando agora';
+  $('now-playing-label').textContent = label;
+  $('now-playing-toggle').textContent = snap.paused ? '▶' : '⏸';
+  $('now-playing-toggle').title = snap.paused ? 'Continuar' : 'Pausar';
+
+  const next = snap.next;
+  $('now-playing-next-title').textContent = next ? next.nome : '—';
+  $('now-playing-next-artist').textContent = next ? next.artista : (np ? 'fim da lista' : '—');
+  const nextCover = $('now-playing-next-cover');
+  if (next && next.capaUrl) { nextCover.src = next.capaUrl; nextCover.hidden = false; } else { nextCover.removeAttribute('src'); nextCover.hidden = true; }
+  $('now-playing-next-delete').hidden = !next;
+
+  updateProgressUi();
+}
+
+function updateProgressUi() {
+  if (!snap || !snap.nowPlaying) return;
+  const dur = snap.durationMs || snap.nowPlaying.duracaoMs || 0;
+  const pos = snapPositionMs();
+  const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
+
+  $('now-playing-progress').style.width = `${pct}%`;
+  $('now-playing-time').textContent = fmtClockMs(pos);
+  $('now-playing-duration').textContent = dur ? fmtClockMs(dur) : '--:--';
+
+  const fill = document.getElementById(`progress-${snap.nowPlaying.id}`);
+  if (fill) fill.style.width = `${pct}%`;
+}
+
+// Rótulo do botão principal da linha que está tocando (Pausar/Continuar)
+function renderRowStates() {
+  const paused = Boolean(snap && snap.paused);
+  document.querySelectorAll('.track-row[data-status="tocando"] [data-row-play]').forEach((btn) => {
+    btn.textContent = paused ? '▶ Continuar' : '⏸ Pausar';
+  });
+}
+
+function renderStatus() {
+  let html;
+  if (!spotifyChecked) {
+    html = 'verificando conexão com o Spotify…';
+  } else if (!spotifyConnected) {
+    html = 'Spotify ainda não conectado.';
+  } else if (isOfficial) {
+    if (playerError) html = playerError;
+    else if (sdkDeviceId) html = 'Spotify conectado — <strong>player pronto ✓</strong> (o som sai desta tela)';
+    else html = 'Spotify conectado — <strong>carregando player…</strong>';
+  } else if (officialOwnerId) {
+    if (snap && snap.online) html = 'Spotify conectado — <strong>o som toca em outra tela</strong> (esta só controla)';
+    else if (snap && !snap.deviceReady) html = 'Spotify conectado — <strong>o Player Oficial está carregando…</strong>';
+    else html = 'Spotify conectado — <strong>o Player Oficial está offline</strong>. Abra a tela oficial ou ative "Player Oficial" aqui.';
+  } else {
+    html = 'Spotify conectado — <strong>nenhuma tela é o Player Oficial</strong>. Ative "Player Oficial: ON" na tela que vai tocar.';
+  }
+  spotifyStatusEl.innerHTML = html;
+
+  spotifyConnectBtn.hidden = !spotifyChecked || spotifyConnected;
+  spotifyDisconnectBtn.hidden = !spotifyConnected;
+  officialBtn.textContent = `Player Oficial: ${isOfficial ? 'ON' : 'OFF'}`;
+  officialBtn.setAttribute('aria-pressed', String(isOfficial));
+}
+
+function renderTrackRow(item) {
+  const isPlaying = item.status === 'tocando';
+  const isPlayed = item.status === 'tocada';
+  const paused = isPlaying && snap && snap.paused;
+
+  const playLabel = isPlaying ? (paused ? '▶ Continuar' : '⏸ Pausar') : isPlayed ? '↺ Tocar de novo' : '▶ Tocar';
+  let secondary = '';
+  if (isPlaying) {
+    secondary = '<button class="btn btn--ghost" data-skip title="Pular para a próxima música">Pular ⏭</button>';
+  } else if (isPlayed) {
+    secondary = `<button class="btn btn--ghost" data-action="pendente" data-id="${item.id}">colocar na fila</button>`;
+  }
+
+  return `
+    <div class="track-row" data-status="${escapeHtml(item.status)}" data-id="${item.id}" data-track-id="${escapeHtml(item.track_id)}">
+      ${item.capa_url ? `<img class="track-row__cover" src="${escapeHtml(item.capa_url)}" alt="" loading="lazy" />` : '<div class="track-row__cover"></div>'}
+      <div class="track-row__info">
+        <div class="track-row__name">${escapeHtml(item.nome)}</div>
+        <div class="track-row__artist">
+          ${escapeHtml(item.artista)}
+          ${item.matricula ? `<span class="track-row__matricula" title="Sugerido pelo aluno de matrícula ${escapeHtml(item.matricula)}">👤 ${escapeHtml(item.matricula)}</span>` : ''}
+        </div>
+      </div>
+      <div class="track-progress">
+        <div class="track-progress__fill" id="progress-${item.id}"></div>
+      </div>
+      <div class="track-row__duration">${fmtDuration(Number(item.duracao_ms))}</div>
+      <div class="track-row__actions">
+        <button class="btn btn--primary" data-row-play="${item.id}">${playLabel}</button>
+        ${secondary}
+        <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
+        <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
+      </div>
+    </div>
+  `;
+}
+
+let stripsSig = '';
+function renderStrips(force) {
+  const data = lastQueue;
+  if (!data) return;
+  const sig = JSON.stringify([data, playlistState]);
+  if (!force && sig === stripsSig) return;
+  stripsSig = sig;
+
+  activeBanner.textContent = data.activeContext ? data.activeContext.nome : 'nenhum contexto configurado';
+
+  strips.innerHTML = data.contexts
+    .map((ctx) => {
+      const isViewing = ctx.id === data.viewingContextId;
+      const isActiveContext = data.activeContext && ctx.id === data.activeContext.id;
+      const pl = playlistState[ctx.id];
+      const plBtn = pl && pl.url
+        ? `<a class="btn btn--primary" style="margin-left: 8px" href="${escapeHtml(pl.url)}" target="_blank" rel="noopener">Abrir playlist ↗</a>`
+        : `<button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" ${pl && pl.busy ? 'disabled' : ''} title="Transforma a fila desse contexto em uma playlist no Spotify">${pl && pl.busy ? 'Criando…' : 'Criar Playlist'}</button>`;
+
+      const body = isViewing
+        ? `<div class="strip__body" data-body>
+             ${data.items.length ? data.items.map(renderTrackRow).join('') : '<div class="empty-row">Nenhuma música na fila ainda.' + (isActiveContext ? ' Compartilhe o QR code com os alunos.' : '') + '</div>'}
+           </div>`
+        : '<div class="strip__body" hidden></div>';
+
+      return `
+        <div class="strip ${isActiveContext ? 'strip--active' : ''}" style="--strip-color:${escapeHtml(ctx.cor)}" data-context-id="${ctx.id}">
+          <div class="strip__header" data-toggle="${ctx.id}">
+            <span class="strip__name">${escapeHtml(ctx.nome)}</span>
+            <span class="strip__meta">
+              <span class="level">${levelDots(ctx.naFila)}</span>
+              <span class="strip__count">${ctx.naFila} na fila</span>
+              <label class="toggle-random" title="Tocar as músicas desta lista de forma aleatória (vale para todas as telas)">
+                <input type="checkbox" data-random-context="${ctx.id}" class="random-checkbox" ${ctx.aleatorio ? 'checked' : ''} />
+                <span class="random-label">Tocar Aleatório</span>
+              </label>
+              ${plBtn}
+            </span>
+          </div>
+          ${body}
+        </div>
+      `;
+    })
+    .join('');
+
+  renderContextEditor(data.contexts);
+  renderSelects(data.contexts, data.activeContext);
+  renderRowStates();
+  updateProgressUi();
+}
+
+let selectsSig = '';
+function renderSelects(contexts, activeContext) {
+  const sig = JSON.stringify(contexts.map((c) => [c.id, c.nome]));
+  if (sig === selectsSig) return;   // recriar as opções fecharia o menu aberto
+  selectsSig = sig;
+
+  const previousAdd = addContextSelect.value;
+  const previousImport = importContextSelect.value;
+  const options = contexts.map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+
+  for (const [select, previous] of [[addContextSelect, previousAdd], [importContextSelect, previousImport]]) {
+    select.innerHTML = options;
+    if (contexts.some((c) => String(c.id) === previous)) select.value = previous;
+    else if (activeContext) select.value = String(activeContext.id);
+  }
+}
+
+let editorSig = '';
+let editorPending = null;
+function renderContextEditor(contexts) {
+  const sig = JSON.stringify(contexts.map((c) => [c.id, c.nome, c.ordem]));
+  if (sig === editorSig) return;
+  // Não troca os campos enquanto alguém está digitando um nome
+  if (contextEditor.contains(document.activeElement)) { editorPending = contexts; return; }
+  editorSig = sig;
+  editorPending = null;
+
+  contextEditor.innerHTML = contexts
+    .map((ctx) => {
+      const fixa = ctx.nome === NOME_LISTA_PEDIDOS;
+      return `
+      <div class="ctx-edit-row" data-ctx-id="${ctx.id}" style="display:flex; gap:4px; align-items:center;">
+        <button class="btn btn--ghost" data-move-context="-1" title="Subir" style="padding: 4px; margin: 0; min-height: 0;">▲</button>
+        <button class="btn btn--ghost" data-move-context="1" title="Descer" style="padding: 4px; margin: 0; min-height: 0;">▼</button>
+        <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" style="flex:1" ${fixa ? 'readonly title="Lista fixa: recebe os pedidos do QR code"' : ''} />
+        ${fixa ? '<span style="width:30px"></span>' : `<button class="btn btn--danger" data-delete-context="${ctx.id}" title="Excluir contexto" style="padding: 4px 8px; margin: 0;">✕</button>`}
+      </div>`;
+    })
+    .join('');
+}
+
+contextEditor.addEventListener('focusout', () => {
+  if (!editorPending) return;
+  setTimeout(() => {
+    if (editorPending && !contextEditor.contains(document.activeElement)) renderContextEditor(editorPending);
+  }, 0);
+});
+
+// ------------------------------------------------------------------- filas
+
+let queueInFlight = null;
+let queueDirty = false;
+function loadQueue() {
+  if (queueInFlight) { queueDirty = true; return queueInFlight; }
+  queueInFlight = (async () => {
+    do {
+      queueDirty = false;
+      const qs = viewingContextId ? `?contextId=${viewingContextId}` : '';
+      const r = await api('GET', `/api/queue${qs}`);
+      if (!r.ok) break;
+      lastQueue = r.data;
+      // lista aberta foi excluída em outra tela: volta para a padrão
+      if (viewingContextId && !lastQueue.contexts.some((c) => c.id === viewingContextId)) {
+        viewingContextId = null;
+        queueDirty = true;
+        continue;
+      }
+      renderStrips();
+    } while (queueDirty);
+  })().finally(() => { queueInFlight = null; });
+  return queueInFlight;
+}
+
+async function refreshAll() {
+  await pollPlayer(true);
+  await loadQueue();
+}
+
+// Executa uma ação de controle e mostra o erro (mensagem do servidor) se falhar
+async function control(method, url, body) {
+  const r = await api(method, url, body);
+  if (!r.ok) {
+    toast(r.data.erro || 'Não foi possível executar o comando.', 'erro');
+  } else {
+    if (r.data.aviso) toast(r.data.aviso, 'erro');
+    const puladas = (r.data.puladas || (r.data.avanco && r.data.avanco.puladas) || []);
+    if (puladas.length) toast(`Não achei no Spotify e pulei: ${puladas.join(', ')}`, 'erro');
+  }
+  await refreshAll();
+  return r;
+}
+
+// -------------------------------------------------------------- eventos: listas
+
+strips.addEventListener('click', async (e) => {
+  const createPlaylistBtn = e.target.closest('[data-create-playlist]');
+  if (createPlaylistBtn) {
+    const contextId = Number(createPlaylistBtn.dataset.createPlaylist);
+    playlistState[contextId] = { busy: true };
+    renderStrips(true);
+    const r = await api('POST', '/api/spotify/playlist', { contextId });
+    if (r.ok) {
+      playlistState[contextId] = { url: r.data.url };
+      const faltando = (r.data.naoEncontradas || []).length;
+      toast(`Playlist criada com ${r.data.adicionadas} músicas.` + (faltando ? ` ${faltando} não foram achadas no Spotify.` : ''));
+    } else {
+      delete playlistState[contextId];
+      toast(r.data.erro || 'Não foi possível criar a playlist.', 'erro');
+    }
+    renderStrips(true);
+    return;
+  }
+
+  if (e.target.closest('.toggle-random')) return; // o checkbox trata no evento "change"
+
+  const rowPlay = e.target.closest('[data-row-play]');
+  if (rowPlay) {
+    if (rowPlay.disabled) return;
+    const row = rowPlay.closest('.track-row');
+    rowPlay.disabled = true;
+    try {
+      if (row.dataset.status === 'tocando') {
+        await control('POST', snap && snap.paused ? '/api/player/resume' : '/api/player/pause');
+      } else {
+        await control('POST', '/api/player/play', { itemId: Number(rowPlay.dataset.rowPlay) });
+      }
+    } finally {
+      rowPlay.disabled = false;
+    }
+    return;
+  }
+
+  if (e.target.closest('[data-skip]')) {
+    const btn = e.target.closest('[data-skip]');
+    btn.disabled = true;
+    await control('POST', '/api/player/next');
+    return;
+  }
+
+  const actionBtn = e.target.closest('[data-action]');
+  if (actionBtn) {
+    actionBtn.disabled = true;
+    await control('PATCH', `/api/queue/${actionBtn.dataset.id}`, { status: actionBtn.dataset.action });
+    return;
+  }
+
+  // clique no cabeçalho (fora dos controles): abre/fecha a lista
+  const toggle = e.target.closest('[data-toggle]');
+  if (toggle && !e.target.closest('button, a, label, input')) {
+    const id = Number(toggle.dataset.toggle);
+    viewingContextId = lastQueue && lastQueue.viewingContextId === id ? null : id;
+    loadQueue();
+  }
+});
+
+strips.addEventListener('change', async (e) => {
+  if (!e.target.classList.contains('random-checkbox')) return;
+  const contextId = Number(e.target.dataset.randomContext);
+  const checked = e.target.checked;
+  const r = await api('PATCH', `/api/contexts/${contextId}`, { aleatorio: checked });
+  if (!r.ok) {
+    e.target.checked = !checked;
+    toast(r.data.erro || 'Não foi possível mudar o modo aleatório.', 'erro');
+  }
+  await refreshAll();
+});
+
+contextEditor.addEventListener('change', async (e) => {
+  const row = e.target.closest('[data-ctx-id]');
+  if (!row || e.target.readOnly) return;
+  const payload = {};
+  row.querySelectorAll('[data-field]').forEach((input) => {
+    payload[input.dataset.field] = input.value;
+  });
+  const r = await api('PATCH', `/api/contexts/${row.dataset.ctxId}`, payload);
+  if (!r.ok) toast(r.data.erro || 'Não foi possível renomear.', 'erro');
+  editorSig = ''; // força releitura do nome salvo
+  loadQueue();
+});
+
+contextEditor.addEventListener('click', async (e) => {
+  const moveBtn = e.target.closest('[data-move-context]');
+  if (moveBtn) {
+    const dir = parseInt(moveBtn.dataset.moveContext, 10);
+    const row = moveBtn.closest('.ctx-edit-row');
+    const allRows = Array.from(contextEditor.querySelectorAll('.ctx-edit-row'));
+    const index = allRows.indexOf(row);
+    if (index === -1) return;
+
+    if (dir === -1 && index > 0) {
+      contextEditor.insertBefore(row, allRows[index - 1]);
+    } else if (dir === 1 && index < allRows.length - 1) {
+      contextEditor.insertBefore(row, allRows[index + 2] || null);
+    } else {
+      return;
+    }
+
+    const newOrder = Array.from(contextEditor.querySelectorAll('.ctx-edit-row')).map((r) => Number(r.dataset.ctxId));
+    const r = await api('POST', '/api/contexts/reorder', { order: newOrder });
+    if (!r.ok) toast('Erro ao reordenar.', 'erro');
+    editorSig = '';
+    loadQueue();
+    return;
+  }
+
+  const deleteBtn = e.target.closest('[data-delete-context]');
+  if (deleteBtn) {
+    const id = Number(deleteBtn.dataset.deleteContext);
+    if (!confirm('Tem certeza que quer excluir este contexto? Todas as músicas na fila dele serão perdidas.')) return;
+    deleteBtn.disabled = true;
+    const r = await api('DELETE', `/api/contexts/${id}`);
+    if (r.ok) {
+      if (viewingContextId === id) viewingContextId = null;
+      editorSig = '';
+      await refreshAll();
+    } else {
+      toast(r.data.erro || 'Falha ao excluir.', 'erro');
+      deleteBtn.disabled = false;
+    }
+  }
+});
+
+$('add-context-btn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Adicionando...';
+  const r = await api('POST', '/api/contexts', {
+    nome: 'Nova Categoria',
+    cor: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'), // cor aleatória
+  });
+  if (r.ok) loadQueue();
+  else toast(r.data.erro || 'Falha ao criar contexto.', 'erro');
+  btn.disabled = false;
+  btn.textContent = '+ Novo Contexto';
+});
+
+// -------------------------------------------------- eventos: player (todas as telas)
+
+nowPlayingEl.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-np-action]');
+  if (!btn || btn.disabled || !snap || !snap.nowPlaying) return;
+  const action = btn.dataset.npAction;
+  btn.disabled = true;
+  try {
+    if (action === 'toggle') {
+      await control('POST', snap.paused ? '/api/player/resume' : '/api/player/pause');
+    } else if (action === 'skip') {
+      await control('POST', '/api/player/next');
+    } else if (action === 'delete') {
+      if (!confirm(`Excluir "${snap.nowPlaying.nome}" da lista e tocar a próxima?`)) return;
+      await control('PATCH', `/api/queue/${snap.nowPlaying.id}`, { status: 'removida' });
+    } else if (action === 'delete-next' && snap.next) {
+      if (!confirm(`Excluir a próxima música ("${snap.next.nome}") da lista?`)) return;
+      await control('PATCH', `/api/queue/${snap.next.id}`, { status: 'removida' });
+    }
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Volume: vale para o Player Oficial, de qualquer tela
+let volumeDragging = false;
+let volumeHoldUntil = 0;
+let volumeTimer = null;
 
 function volumeIcon(pct) {
   if (pct === 0) return '🔇';
@@ -77,462 +654,293 @@ function setVolumeUi(pct) {
   volumeIconEl.textContent = volumeIcon(pct);
 }
 
-setVolumeUi(getSavedVolumePct());
-
-// Envia o volume para a API do Spotify (controla o dispositivo real)
-async function sendVolumeToSpotify(pct) {
-  try {
-    await fetch('/api/spotify/volume', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ volume_percent: pct }),
-    });
-    lastKnownVolume = pct;
-  } catch (e) {
-    console.error('Erro ao enviar volume para o Spotify:', e);
-  }
-}
-
-// Lê o volume atual do dispositivo Spotify e atualiza o slider
-async function syncVolumeFromSpotify() {
-  if (volumeSyncPaused) return; // não sobrescreve enquanto o usuário mexe
-  try {
-    const res = await fetch('/api/spotify/volume');
-    const data = await res.json();
-    if (data.volume_percent != null) {
-      const pct = Math.round(data.volume_percent);
-      if (pct !== lastKnownVolume) {
-        lastKnownVolume = pct;
-        setVolumeUi(pct);
-        localStorage.setItem('sda_volume', String(pct));
-        if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100);
-      }
-    }
-  } catch (e) {
-    // silencioso — rede pode estar instável
-  }
+function renderVolume() {
+  if (!snap || volumeDragging || performance.now() < volumeHoldUntil) return;
+  setVolumeUi(snap.volume);
 }
 
 volumeSlider.addEventListener('input', () => {
   const pct = Number(volumeSlider.value);
+  volumeDragging = true;
   setVolumeUi(pct);
-  localStorage.setItem('sda_volume', String(pct));
+  if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100); // feedback imediato na tela oficial
 
-  // Atualiza o player local imediatamente para feedback
-  if (spotifyPlayer) spotifyPlayer.setVolume(pct / 100);
-
-  // Pausa a sincronização enquanto o usuário arrasta
-  volumeSyncPaused = true;
-
-  // Debounce: só envia para a API 300ms após parar de arrastar
-  clearTimeout(volumeDebounceTimer);
-  volumeDebounceTimer = setTimeout(() => {
-    sendVolumeToSpotify(pct);
-    volumeSyncPaused = false;
-  }, 300);
+  clearTimeout(volumeTimer);
+  volumeTimer = setTimeout(async () => {
+    const r = await api('PUT', '/api/player/volume', { volumePercent: pct });
+    volumeDragging = false;
+    volumeHoldUntil = performance.now() + 2500; // dá tempo do servidor devolver o novo valor
+    if (!r.ok) toast(r.data.erro || 'Não foi possível mudar o volume.', 'erro');
+  }, 250);
 });
 
-// Polling: sincroniza o volume a cada 10 segundos
-setInterval(syncVolumeFromSpotify, 10000);
-
-function fmtDuration(ms) {
-  if (!ms) return '--:--';
-  const totalSec = Math.round(ms / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return `${min}:${String(sec).padStart(2, '0')}`;
-}
-
-function fmtClock(date) {
-  return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
-
-function levelDots(naFila, max = 5) {
-  const on = Math.min(naFila, max);
-  return Array.from({ length: max }, (_, i) =>
-    `<span class="${i < on ? 'on' : ''}"></span>`
-  ).join('');
-}
-
-function renderTrackRow(item) {
-  const isPlaying = item.status === 'tocando';
-  const isPlayed = item.status === 'tocada';
-  const widthStr = isPlaying ? `${currentPlayingPct}%` : '0%';
-
-  let actionBtn;
-  if (isPlaying) {
-    actionBtn = `<button class="btn btn--ghost" data-action="tocada" data-id="${item.id}">marcar tocada</button>`;
-  } else if (isPlayed) {
-    actionBtn = `<button class="btn btn--ghost" data-action="pendente" data-id="${item.id}">colocar na fila</button>`;
-  } else {
-    actionBtn = `<button class="btn btn--ghost" data-action="tocando" data-id="${item.id}">marcar tocando</button>`;
-  }
-
-  const playLabel = isPlaying ? 'Tocando' : isPlayed ? '↺ Tocar de novo' : '▶ Tocar';
-
-  return `
-    <div class="track-row" data-status="${item.status}" data-id="${item.id}" data-track-id="${item.track_id}">
-      <img class="track-row__cover" src="${item.capa_url || ''}" alt="" loading="lazy" />
-      <div class="track-row__info">
-        <div class="track-row__name">${escapeHtml(item.nome)}</div>
-        <div class="track-row__artist">
-          ${escapeHtml(item.artista)}
-          ${item.matricula ? `<span class="track-row__matricula" title="Sugerido pelo aluno de matrícula ${escapeHtml(item.matricula)}">👤 ${escapeHtml(item.matricula)}</span>` : ''}
-        </div>
-      </div>
-      <div class="track-progress">
-        <div class="track-progress__fill" id="progress-${item.id}" style="width: ${widthStr}; transition: ${isPlaying ? 'width 1s linear' : 'none'};"></div>
-      </div>
-      <div class="track-row__duration">${fmtDuration(item.duracao_ms)}</div>
-      <div class="track-row__actions">
-        <button class="btn btn--primary" data-play-id="${item.id}" ${spotifyDeviceId ? '' : `disabled title="${isOfficial ? 'Conecte o Spotify e espere o player ficar pronto' : 'Só o Player Oficial toca. Ative &quot;Player Oficial&quot; nesta tela para tocar aqui.'}"`}>${playLabel}</button>
-        ${actionBtn}
-        <a class="btn btn--ghost" href="https://open.spotify.com/search/${encodeURIComponent(item.nome + ' ' + item.artista)}" target="_blank" rel="noopener" title="Abrir busca no Spotify (manual)">↗</a>
-        <button class="btn btn--danger" data-action="removida" data-id="${item.id}">Remover</button>
-      </div>
-    </div>
-  `;
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function render(data) {
-  lastData = data;
-  activeBanner.textContent = data.activeContext ? data.activeContext.nome : 'nenhum contexto configurado';
-
-  strips.innerHTML = data.contexts
-    .map((ctx) => {
-      const isViewing = ctx.id === (viewingContextId || data.activeContext?.id);
-      const isActiveContext = data.activeContext && ctx.id === data.activeContext.id;
-      const items = isViewing ? data.items : [];
-
-      const body = isViewing
-        ? `<div class="strip__body" data-body>
-             ${items.length ? items.map(renderTrackRow).join('') : '<div class="empty-row">Nenhuma sugestão na fila ainda. Compartilhe o QR code com os alunos.</div>'}
-           </div>`
-        : `<div class="strip__body" hidden></div>`;
-
-      return `
-        <div class="strip ${isActiveContext ? 'strip--active' : ''}" style="--strip-color:${ctx.cor}" data-context-id="${ctx.id}">
-          <div class="strip__header" data-toggle="${ctx.id}">
-            <span class="strip__name">${escapeHtml(ctx.nome)}</span>
-            <span class="strip__meta">
-              <span class="level">${levelDots(ctx.naFila)}</span>
-              <span class="strip__count">${ctx.naFila} na fila</span>
-              <label class="toggle-random" title="Tocar músicas deste contexto de forma aleatória">
-                <input type="checkbox" data-random-context="${ctx.id}" class="random-checkbox" ${randomModes[ctx.id] ? 'checked' : ''} />
-                <span class="random-label">Tocar Aleatório</span>
-              </label>
-              <button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" title="Transforma a fila desse contexto em uma playlist no Spotify">Criar Playlist</button>
-            </span>
-          </div>
-          ${body}
-        </div>
-      `;
-    })
-    .join('');
-
-  renderContextEditor(data.contexts);
-  renderAddContextSelect(data.contexts, data.activeContext);
-}
-
-function renderAddContextSelect(contexts, activeContext) {
-  knownContexts = contexts;
-  const previousAddValue = addContextSelect.value;
-  const previousImportValue = importContextSelect.value;
-  const hasPreviousAdd = contexts.some((c) => String(c.id) === previousAddValue);
-  const hasPreviousImport = contexts.some((c) => String(c.id) === previousImportValue);
-
-  addContextSelect.innerHTML = contexts
-    .map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)
-    .join('');
-
-  if (hasPreviousAdd) {
-    addContextSelect.value = previousAddValue;
-  } else if (activeContext) {
-    addContextSelect.value = String(activeContext.id);
-  }
-
-  // Clona o select para o import
-  importContextSelect.innerHTML = addContextSelect.innerHTML;
-  
-  if (hasPreviousImport) {
-    importContextSelect.value = previousImportValue;
-  } else if (activeContext) {
-    importContextSelect.value = String(activeContext.id);
-  }
-}
-
-function renderContextEditor(contexts) {
-  contextEditor.innerHTML = contexts
-    .map(
-      (ctx) => `
-      <div class="ctx-edit-row" data-ctx-id="${ctx.id}" style="display:flex; gap:4px; align-items:center;">
-        <button class="btn btn--ghost" data-move-context="-1" title="Subir" style="padding: 4px; margin: 0; min-height: 0;">▲</button>
-        <button class="btn btn--ghost" data-move-context="1" title="Descer" style="padding: 4px; margin: 0; min-height: 0;">▼</button>
-        <input type="text" value="${escapeHtml(ctx.nome)}" data-field="nome" style="flex:1" />
-        <button class="btn btn--danger" data-delete-context="${ctx.id}" title="Excluir contexto" style="padding: 4px 8px; margin: 0;">✕</button>
-      </div>`
-    )
-    .join('');
-}
-
-async function loadQueue() {
-  const qs = viewingContextId ? `?contextId=${viewingContextId}` : '';
-  const res = await fetch(`/api/queue${qs}`);
-  const data = await res.json();
-  render(data);
-  updateNowPlayingWidget();
-}
-
-strips.addEventListener('click', async (e) => {
-  const toggle = e.target.closest('[data-toggle]');
-  if (toggle) {
-    const id = Number(toggle.dataset.toggle);
-    viewingContextId = viewingContextId === id ? null : id;
-    loadQueue();
-    return;
-  }
-
-  const createPlaylistBtn = e.target.closest('[data-create-playlist]');
-  if (createPlaylistBtn) {
-    const contextId = Number(createPlaylistBtn.dataset.createPlaylist);
-    const originalText = createPlaylistBtn.textContent;
-    createPlaylistBtn.disabled = true;
-    createPlaylistBtn.textContent = 'Criando...';
-    try {
-      const res = await fetch('/api/spotify/playlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextId }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        window.open(data.url, '_blank');
-        createPlaylistBtn.textContent = 'Playlist Criada ✓';
-      } else {
-        alert(data.erro || 'Não foi possível criar a playlist.');
-        createPlaylistBtn.disabled = false;
-        createPlaylistBtn.textContent = originalText;
-      }
-    } catch {
-      alert('Erro de rede ao tentar criar a playlist.');
-      createPlaylistBtn.disabled = false;
-      createPlaylistBtn.textContent = originalText;
-    }
-    return;
-  }
-
-  const shuffleBtn = e.target.closest('[data-shuffle-context]');
-  if (shuffleBtn) {
-    const contextId = Number(shuffleBtn.dataset.shuffleContext);
-    const originalText = shuffleBtn.textContent;
-    shuffleBtn.disabled = true;
-    shuffleBtn.textContent = 'Embaralhando...';
-    try {
-      const r = await fetch(`/api/contexts/${contextId}/shuffle`, { method: 'POST' });
-      if (r.ok) {
-        shuffleBtn.textContent = '✓ Pronto';
-        loadQueue();
-        setTimeout(() => {
-          shuffleBtn.textContent = originalText;
-          shuffleBtn.disabled = false;
-        }, 2000);
-      } else {
-        shuffleBtn.disabled = false;
-        shuffleBtn.textContent = originalText;
-        alert('Falha ao embaralhar.');
-      }
-    } catch {
-      shuffleBtn.disabled = false;
-      shuffleBtn.textContent = originalText;
-      alert('Erro de conexão ao tentar embaralhar.');
-    }
-    return;
-  }
-
-  const playBtn = e.target.closest('[data-play-id]');
-  if (playBtn && !playBtn.disabled) {
-    const row = playBtn.closest('.track-row');
-    if (row && row.dataset.status === 'tocando') {
-      if (spotifyPlayer) {
-        spotifyPlayer.togglePlay();
-      }
-      return;
-    }
-
-    const queueItemId = playBtn.dataset.playId;
-    const originalText = playBtn.textContent;
-    playBtn.disabled = true;
-    playBtn.textContent = 'Carregando…';
-    try {
-      const res = await fetch('/api/spotify/play', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queueItemId, deviceId: spotifyDeviceId, clientId }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        await fetch(`/api/queue/${queueItemId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'tocando' }),
-        });
-        spotifyPauseBtn.hidden = false;
-        loadQueue();
-      } else {
-        alert(data.erro || 'Não foi possível tocar essa música.');
-        playBtn.disabled = false;
-        playBtn.textContent = originalText;
-      }
-    } catch {
-      alert('Erro de conexão ao tentar tocar.');
-      playBtn.disabled = false;
-      playBtn.textContent = originalText;
-    }
-    return;
-  }
-
-
-  const actionBtn = e.target.closest('[data-action]');
-  if (actionBtn) {
-    const id = actionBtn.dataset.id;
-    const status = actionBtn.dataset.action;
-    await fetch(`/api/queue/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    });
-    loadQueue();
-  }
-});
-
-strips.addEventListener('change', (e) => {
-  if (e.target.classList.contains('random-checkbox')) {
-    const contextId = e.target.dataset.randomContext;
-    randomModes[contextId] = e.target.checked;
-    localStorage.setItem('sda_random_modes', JSON.stringify(randomModes));
-  }
-});
-
-contextEditor.addEventListener('change', async (e) => {
-  const row = e.target.closest('[data-ctx-id]');
-  if (!row) return;
-  const id = row.dataset.ctxId;
-  const payload = {};
-  row.querySelectorAll('[data-field]').forEach((input) => {
-    payload[input.dataset.field] = input.value;
-  });
-  await fetch(`/api/contexts/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  loadQueue();
-});
-
-contextEditor.addEventListener('click', async (e) => {
-  const moveBtn = e.target.closest('[data-move-context]');
-  if (moveBtn) {
-    const dir = parseInt(moveBtn.dataset.moveContext, 10);
-    const row = moveBtn.closest('.ctx-edit-row');
-    const allRows = Array.from(contextEditor.querySelectorAll('.ctx-edit-row'));
-    const index = allRows.indexOf(row);
-    if (index === -1) return;
-    
-    if (dir === -1 && index > 0) {
-      contextEditor.insertBefore(row, allRows[index - 1]);
-    } else if (dir === 1 && index < allRows.length - 1) {
-      contextEditor.insertBefore(row, allRows[index + 2] || null);
-    } else {
-      return;
-    }
-    
-    const newOrder = Array.from(contextEditor.querySelectorAll('.ctx-edit-row')).map(r => Number(r.dataset.ctxId));
-    
-    try {
-      await fetch('/api/contexts/reorder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: newOrder })
-      });
-      // Apenas recarrega para sincronizar sem resetar o timer
-      loadQueue();
-    } catch {
-      alert('Erro ao reordenar.');
-    }
-    return;
-  }
-
-  const deleteBtn = e.target.closest('[data-delete-context]');
-  if (deleteBtn) {
-    const id = deleteBtn.dataset.deleteContext;
-    if (!confirm('Tem certeza que quer excluir este contexto? Todas as músicas na fila dele serão perdidas.')) return;
-    deleteBtn.disabled = true;
-    try {
-      const res = await fetch(`/api/contexts/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        if (viewingContextId === Number(id)) viewingContextId = null;
-        loadQueue();
-      } else {
-        alert('Falha ao excluir.');
-        deleteBtn.disabled = false;
-      }
-    } catch {
-      alert('Erro ao excluir contexto.');
-      deleteBtn.disabled = false;
-    }
-  }
-});
-
-document.getElementById('add-context-btn')?.addEventListener('click', async (e) => {
-  const btn = e.target;
-  btn.disabled = true;
-  btn.textContent = 'Adicionando...';
+// Na tela oficial, garante que o SDK está no volume combinado (caso o comando do Spotify não tenha chegado)
+async function syncOfficialVolume() {
+  if (!spotifyPlayer || !snap || volumeDragging || performance.now() < volumeHoldUntil) return;
   try {
-    const res = await fetch('/api/contexts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nome: 'Nova Categoria',
-        cor: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0') // cor aleatoria
-      }),
-    });
-    if (res.ok) {
-      loadQueue();
-    } else {
-      alert('Falha ao criar contexto.');
+    const current = await spotifyPlayer.getVolume();
+    if (typeof current === 'number' && Math.abs(current * 100 - snap.volume) > 2) {
+      spotifyPlayer.setVolume(snap.volume / 100);
     }
-  } catch {
-    alert('Erro de conexão.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '+ Novo Contexto';
-  }
-});
-
-function tickClock() {
-  clockEl.textContent = fmtClock(new Date());
+  } catch { /* SDK ainda carregando */ }
 }
 
-qrImg.src = '/api/qrcode?' + Date.now();
+// ------------------------------------------------------- Player Oficial: ligar/desligar
 
-tickClock();
-setInterval(tickClock, 1000 * 10);
-loadQueue();
-setInterval(loadQueue, 1000 * 15);
+officialBtn.addEventListener('click', async () => {
+  officialBtn.disabled = true;
+  const turningOn = !isOfficial;
+  const r = await api(turningOn ? 'PUT' : 'DELETE', '/api/player/official', { clientId });
+  officialBtn.disabled = false;
+  if (!r.ok) {
+    toast(r.data.erro || 'Não foi possível alterar o Player Oficial.', 'erro');
+    return;
+  }
+  if (channel) channel.postMessage({ t: 'changed' }); // avisa as outras abas deste navegador na hora
+  await pollPlayer(true);                              // aplica o novo dono (liga/desliga o player local)
+  if (turningOn) activatePlayerElement();
+});
 
-// --- Adicionar música direto (busca independente da fila, não é afetada pelo auto-refresh) ---
+function activatePlayerElement() {
+  try {
+    if (spotifyPlayer && typeof spotifyPlayer.activateElement === 'function') spotifyPlayer.activateElement();
+  } catch { /* navegador sem suporte */ }
+}
+// Alguns navegadores só liberam o áudio depois de um clique na própria página
+document.addEventListener('pointerdown', activatePlayerElement, { passive: true });
+
+function applyOfficialRole() {
+  if (isOfficial) {
+    playerError = null;
+    maybeStartPlayer();
+  } else {
+    stopLocalPlayer();
+  }
+  renderStatus();
+}
+
+function stopLocalPlayer() {
+  if (spotifyPlayer) {
+    try { spotifyPlayer.disconnect(); } catch { /* já desconectado */ }
+  }
+  spotifyPlayer = null;
+  sdkDeviceId = null;
+  lastSdk = null;
+  prevSdk = null;
+  playerError = null;
+}
+
+// ------------------------------------------------------- Player Oficial: SDK do Spotify
+
+window.__onSdkReady = () => {
+  sdkReady = true;
+  maybeStartPlayer();
+};
+
+let lastSdk = null;    // último estado lido do SDK (normalizado)
+let prevSdk = null;
+let lastReportAt = 0;
+let advancingFor = null;
+let earlyDisabledFor = null;
+const advanceTries = {};
+
+// A faixa terminou: parada na posição 0 com ela mesma na lista de "anteriores"
+function isEndedState(s) {
+  return Boolean(s && s.paused && s.position === 0 && s.previousIds.includes(s.currentId));
+}
+
+function normalizeSdkState(state) {
+  if (!state || !state.track_window || !state.track_window.current_track) return null;
+  const cur = state.track_window.current_track;
+  return {
+    position: state.position,
+    duration: state.duration,
+    paused: state.paused,
+    uri: cur.uri,
+    linked: cur.linked_from ? cur.linked_from.uri : null,
+    currentId: cur.id,
+    previousIds: (state.track_window.previous_tracks || []).map((t) => t.id),
+  };
+}
+
+// O estado do SDK é da música que ele está tocando; só vale se for a que o servidor diz estar no ar
+function sdkMatchesNowPlaying(s) {
+  const np = snap && snap.nowPlaying;
+  if (!s || !np || !np.spotifyUri) return false;
+  return s.uri === np.spotifyUri || s.linked === np.spotifyUri;
+}
+
+function maybeStartPlayer() {
+  if (!sdkReady || !spotifyConnected || !isOfficial || spotifyPlayer || !window.Spotify) return;
+
+  const player = new Spotify.Player({
+    name: 'Som da Academia',
+    getOAuthToken: async (callback) => {
+      const r = await api('GET', '/api/spotify/token');
+      callback(r.data.accessToken || '');
+    },
+    volume: (snap ? snap.volume : 80) / 100,
+  });
+  spotifyPlayer = player;
+  const mine = () => spotifyPlayer === player; // ignora eventos de um player já desligado
+
+  player.addListener('ready', ({ device_id }) => {
+    if (!mine()) return;
+    sdkDeviceId = device_id;
+    playerError = null;
+    registerDevice(device_id);
+    renderStatus();
+  });
+  player.addListener('not_ready', () => {
+    if (!mine()) return;
+    sdkDeviceId = null;
+    renderStatus();
+  });
+  player.addListener('authentication_error', () => {
+    if (!mine()) return;
+    playerError = 'Erro de autenticação com o Spotify. Tente reconectar.';
+    spotifyConnectBtn.hidden = false;
+    renderStatus();
+  });
+  player.addListener('account_error', () => {
+    if (!mine()) return;
+    playerError = '<strong>Essa conta do Spotify não é Premium</strong> — o player de verdade exige Premium na conta conectada.';
+    renderStatus();
+  });
+  player.addListener('initialization_error', ({ message }) => {
+    if (!mine()) return;
+    playerError = 'Não foi possível iniciar o player neste navegador: ' + escapeHtml(message);
+    renderStatus();
+  });
+  player.addListener('player_state_changed', (state) => {
+    if (!mine()) return;
+    onSdkState(normalizeSdkState(state));
+  });
+
+  player.connect();
+  activatePlayerElement();
+}
+
+// Avisa o servidor qual é o device desta tela; se a música estava tocando, ele a retoma aqui
+async function registerDevice(deviceId, tentativa = 0) {
+  const r = await api('PUT', '/api/player/device', { clientId, deviceId });
+  if (r.status === 403) return; // perdeu o posto de oficial
+  if (!r.ok) {
+    if (tentativa < 5 && sdkDeviceId === deviceId) {
+      await sleep(2000);
+      if (sdkDeviceId === deviceId) registerDevice(deviceId, tentativa + 1);
+    } else {
+      toast('Não consegui registrar o Player Oficial no servidor.', 'erro');
+    }
+    return;
+  }
+  await refreshAll();
+}
+
+function onSdkState(s) {
+  const before = prevSdk;
+  prevSdk = s;
+  lastSdk = s;
+  if (!s) return;
+
+  // Fim natural da faixa: estava tocando e parou na posição 0 com a própria faixa em "anteriores"
+  if (before && !before.paused && isEndedState(s) && sdkMatchesNowPlaying(s)) {
+    requestAdvance(snap.nowPlaying.id);
+  }
+  if (sdkMatchesNowPlaying(s)) {
+    // pausou/continuou: reflete na hora nesta tela, sem esperar a próxima consulta ao servidor
+    snap.positionMs = s.position;
+    snap.durationMs = s.duration;
+    snap.paused = s.paused;
+    snap.at = performance.now();
+    renderWidget();
+    renderRowStates();
+  }
+  reportToServer(); // pausou, continuou ou trocou de faixa: as outras telas precisam saber já
+}
+
+// early = true: faltam poucos segundos (avanço antecipado). Se não houver próxima, a música toca até o fim.
+async function requestAdvance(itemId, early = false) {
+  if (advancingFor === itemId || (advanceTries[itemId] || 0) >= 3) return;
+  if (early && earlyDisabledFor === itemId) return;
+  advancingFor = itemId;
+  const r = await api('POST', '/api/player/ended', { clientId, itemId, early });
+  if (r.ok) {
+    if (r.data.semProxima) {
+      earlyDisabledFor = itemId; // última da lista: espera o fim de verdade (detectado abaixo)
+      advancingFor = null;
+    } else if (r.data.ignorado) {
+      // o servidor achou cedo demais / já avançou: libera para tentar de novo, sem contar como falha
+      setTimeout(() => { if (advancingFor === itemId) advancingFor = null; }, 1500);
+    } else if (r.data.puladas && r.data.puladas.length) {
+      toast(`Não achei no Spotify e pulei: ${r.data.puladas.join(', ')}`, 'erro');
+    }
+    await refreshAll();
+  } else {
+    advanceTries[itemId] = (advanceTries[itemId] || 0) + 1;
+    toast(r.data.erro || 'Não foi possível passar para a próxima música.', 'erro');
+    setTimeout(() => { if (advancingFor === itemId) advancingFor = null; }, 4000);
+  }
+}
+
+async function reportToServer() {
+  if (!isOfficial || !spotifyPlayer) return;
+  lastReportAt = performance.now();
+  const body = { clientId, deviceId: sdkDeviceId || undefined };
+  if (lastSdk && sdkMatchesNowPlaying(lastSdk)) {
+    body.positionMs = lastSdk.position;
+    body.durationMs = lastSdk.duration;
+    body.paused = lastSdk.paused;
+  }
+  const r = await api('POST', '/api/player/report', body);
+  if (r.status === 403) pollPlayer(); // perdeu o posto de oficial
+}
+
+async function officialTick() {
+  if (!isOfficial || !spotifyPlayer) return;
+  let raw;
+  try { raw = await spotifyPlayer.getCurrentState(); } catch { return; }
+  const s = normalizeSdkState(raw);
+  lastSdk = s;
+
+  if (s && sdkMatchesNowPlaying(s)) {
+    // progresso exato nesta tela
+    snap.positionMs = s.position;
+    snap.durationMs = s.duration;
+    snap.paused = s.paused;
+    snap.at = performance.now();
+
+    const restante = s.duration - s.position;
+    if (isEndedState(s)) {
+      requestAdvance(snap.nowPlaying.id); // rede de segurança: o evento de fim do SDK não é garantido
+    } else if (CFG.ANTECIPAR_FIM_MS > 0 && !s.paused && s.duration >= CFG.MIN_DURACAO_ANTECIPAR_MS && restante <= CFG.ANTECIPAR_FIM_MS) {
+      requestAdvance(snap.nowPlaying.id, true);
+    }
+  }
+
+  if (performance.now() - lastReportAt >= CFG.REPORT_MS) reportToServer();
+}
+
+// ------------------------------------------------------------- Spotify (conta)
+
+async function checkSpotifyStatus() {
+  const r = await api('GET', '/api/spotify/status');
+  if (r.ok) {
+    spotifyChecked = true;
+    spotifyConnected = Boolean(r.data.connected);
+    if (spotifyConnected) maybeStartPlayer();
+  }
+  renderStatus();
+}
+
+// ------------------------------------------------- adicionar música / importar
+
+let addDebounceTimer = null;
+let addLastQuery = '';
 
 function renderAddResults(resultados) {
   if (!resultados.length) {
-    addResultsEl.innerHTML = addLastQuery
-      ? '<div class="empty-row">Nenhum resultado.</div>'
-      : '';
+    addResultsEl.innerHTML = addLastQuery ? '<div class="empty-row">Nenhum resultado.</div>' : '';
     return;
   }
 
@@ -540,16 +948,16 @@ function renderAddResults(resultados) {
     .map(
       (r) => `
       <div class="add-result">
-        <img src="${r.capaUrl || ''}" alt="" loading="lazy" />
+        <img src="${escapeHtml(r.capaUrl || '')}" alt="" loading="lazy" />
         <div class="add-result__info">
           <div class="add-result__name">${escapeHtml(r.nome)}</div>
           <div class="add-result__artist">${escapeHtml(r.artista)}</div>
         </div>
-        <button class="btn btn--primary" data-add-track-id="${r.trackId}"
+        <button class="btn btn--primary" data-add-track-id="${escapeHtml(r.trackId)}"
                 data-add-nome="${escapeHtml(r.nome)}"
                 data-add-artista="${escapeHtml(r.artista)}"
-                data-add-capa="${r.capaUrl || ''}"
-                data-add-duracao="${r.duracaoMs || ''}">+ Adicionar</button>
+                data-add-capa="${escapeHtml(r.capaUrl || '')}"
+                data-add-duracao="${escapeHtml(r.duracaoMs || '')}">+ Adicionar</button>
       </div>`
     )
     .join('');
@@ -566,13 +974,10 @@ addSearchInput.addEventListener('input', () => {
   }
 
   addDebounceTimer = setTimeout(async () => {
-    try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (addLastQuery === q) renderAddResults(data.resultados || []);
-    } catch {
-      addResultsEl.innerHTML = '<div class="empty-row">Erro ao buscar.</div>';
-    }
+    const r = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
+    if (addLastQuery !== q) return;
+    if (r.ok) renderAddResults(r.data.resultados || []);
+    else addResultsEl.innerHTML = '<div class="empty-row">Erro ao buscar.</div>';
   }, 350);
 });
 
@@ -583,387 +988,90 @@ addResultsEl.addEventListener('click', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Adicionando…';
 
-  try {
-    const res = await fetch('/api/queue/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contextId: Number(addContextSelect.value),
-        trackId: btn.dataset.addTrackId,
-        nome: btn.dataset.addNome,
-        artista: btn.dataset.addArtista,
-        capaUrl: btn.dataset.addCapa,
-        duracaoMs: Number(btn.dataset.addDuracao) || null,
-      }),
-    });
-    if (res.ok) {
-      btn.textContent = 'Adicionada ✓';
-      loadQueue();
-    } else {
-      btn.disabled = false;
-      btn.textContent = '+ Adicionar';
-    }
-  } catch {
+  const r = await api('POST', '/api/queue/add', {
+    contextId: Number(addContextSelect.value),
+    trackId: btn.dataset.addTrackId,
+    nome: btn.dataset.addNome,
+    artista: btn.dataset.addArtista,
+    capaUrl: btn.dataset.addCapa,
+    duracaoMs: Number(btn.dataset.addDuracao) || null,
+  });
+  if (r.ok) {
+    btn.textContent = 'Adicionada ✓';
+    loadQueue();
+  } else {
+    toast(r.data.erro || 'Não foi possível adicionar.', 'erro');
     btn.disabled = false;
     btn.textContent = '+ Adicionar';
   }
 });
 
-// --- Importação em Massa (Texto) ---
-
 importTextBtn.addEventListener('click', async () => {
   const contextId = Number(importContextSelect.value);
   const text = importTextArea.value.trim();
-  
-  if (!contextId) return alert('Selecione um contexto primeiro.');
-  if (!text) return alert('Cole uma lista de músicas primeiro.');
 
-  // Extrai cada linha ignorando vazias
-  const queries = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!contextId) return toast('Selecione um contexto primeiro.', 'erro');
+  if (!text) return toast('Cole uma lista de músicas primeiro.', 'erro');
+
+  const queries = text.split('\n').map((l) => l.trim()).filter(Boolean);
   if (queries.length === 0) return;
-
   if (queries.length > 200) {
-    return alert('Por favor, limite a 200 músicas por vez para não sobrecarregar o Spotify.');
+    return toast('Por favor, limite a 200 músicas por vez.', 'erro');
   }
 
   importTextBtn.disabled = true;
   importTextBtn.textContent = 'Buscando e Importando...';
   importTextStatus.textContent = 'Isso pode levar alguns segundos...';
 
-  try {
-    const res = await fetch('/api/spotify/mass-import-text', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contextId, queries }),
-    });
-    const data = await res.json();
-
-    if (res.ok) {
-      importTextStatus.textContent = `✅ ${data.importedCount} de ${queries.length} músicas encontradas e adicionadas!`;
-      importTextArea.value = '';
-      loadQueue();
-    } else {
-      importTextStatus.textContent = '';
-      alert(data.erro || 'Falha ao importar lista.');
-    }
-  } catch {
+  const r = await api('POST', '/api/spotify/mass-import-text', { contextId, queries });
+  if (r.ok) {
+    const d = r.data;
+    let msg = `✅ ${d.importedCount} de ${d.total} músicas adicionadas.`;
+    if (d.duplicadas) msg += ` ${d.duplicadas} já estavam na lista.`;
+    if (d.naoEncontradas && d.naoEncontradas.length) msg += ` Não encontradas: ${d.naoEncontradas.slice(0, 5).join('; ')}${d.naoEncontradas.length > 5 ? '…' : ''}.`;
+    if (d.falhas) msg += ` ${d.falhas} falharam na busca — tente de novo.`;
+    importTextStatus.textContent = msg;
+    if (!d.falhas) importTextArea.value = '';
+    loadQueue();
+  } else {
     importTextStatus.textContent = '';
-    alert('Erro de conexão.');
-  } finally {
-    importTextBtn.disabled = false;
-    importTextBtn.textContent = 'Importar Lista';
+    toast(r.data.erro || 'Falha ao importar lista.', 'erro');
   }
+  importTextBtn.disabled = false;
+  importTextBtn.textContent = 'Importar Lista';
 });
 
+// ------------------------------------------------------------------- relógio / boot
 
-
-// --- Conexão e player de verdade do Spotify ---
-
-let spotifySdkReady = false;
-let spotifyConnected = false;
-
-// IMPORTANTE: o SDK do Spotify chama esta função assim que termina de carregar.
-// Ela precisa existir ANTES do SDK carregar, por isso é definida logo aqui no
-// topo (não dentro de outra função). Quando o SDK avisar que está pronto,
-// guardamos isso e tentamos iniciar o player se a conexão também já estiver ok.
-window.onSpotifyWebPlaybackSDKReady = () => {
-  spotifySdkReady = true;
-  maybeStartPlayer();
-};
-
-function maybeStartPlayer() {
-  if (!spotifySdkReady || !spotifyConnected || !isOfficial || spotifyPlayer) return;
-
-  spotifyPlayer = new Spotify.Player({
-    name: 'Som da Academia',
-    getOAuthToken: async (callback) => {
-      const res = await fetch('/api/spotify/token');
-      const data = await res.json();
-      callback(data.accessToken);
-    },
-    volume: getSavedVolumePct() / 100,
-  });
-
-  spotifyPlayer.addListener('ready', ({ device_id }) => {
-    spotifyDeviceId = device_id;
-    spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>player pronto ✓</strong>';
-    loadQueue(); // re-renderiza pra habilitar os botões "Tocar"
-  });
-
-  spotifyPlayer.addListener('not_ready', () => {
-    spotifyDeviceId = null;
-    spotifyStatusEl.textContent = 'Player do Spotify desconectado.';
-  });
-
-  spotifyPlayer.addListener('authentication_error', ({ message }) => {
-    spotifyStatusEl.textContent = 'Erro de autenticação com o Spotify. Tente reconectar.';
-    spotifyConnectBtn.hidden = false;
-  });
-
-  spotifyPlayer.addListener('account_error', () => {
-    spotifyStatusEl.innerHTML = '<strong>Essa conta do Spotify não é Premium</strong> — o player de verdade exige Premium na conta conectada.';
-  });
-
-  spotifyPlayer.addListener('initialization_error', ({ message }) => {
-    spotifyStatusEl.textContent = 'Não foi possível iniciar o player neste navegador: ' + message;
-  });
-
-  let currentTrackId = null;
-  let isAutoPlayingNext = false; // impede múltiplas chamadas simultâneas
-
-  spotifyPlayer.addListener('player_state_changed', async (state) => {
-    if (!state || isAutoPlayingNext) return;
-
-    // Detecta se a música acabou (paused = true, position = 0 e tem tracks anteriores)
-    if (state.paused && state.position === 0 && state.track_window.previous_tracks.length > 0) {
-      const endedTrackId = state.track_window.previous_tracks[0].id;
-
-      // Para não rodar duas vezes pro mesmo track_id
-      if (currentTrackId !== endedTrackId) {
-        currentTrackId = endedTrackId;
-        isAutoPlayingNext = true;
-
-        // Descobre qual contexto tem a música "tocando" no momento
-        const { contexts, activeContext } = knownContexts ? { contexts: knownContexts, activeContext: null } : { contexts: [], activeContext: null };
-        let activeCtxId = null;
-        for (const ctx of contexts) {
-          // A gente descobre o contexto ativo procurando no HTML onde está a classe tocando
-          const tocandoRow = document.querySelector(`.strip[data-context-id="${ctx.id}"] .track-row[data-status="tocando"]`);
-          if (tocandoRow) {
-            activeCtxId = ctx.id;
-            break;
-          }
-        }
-
-        if (activeCtxId) {
-          // Verifica se o checkbox de Tocar Aleatório deste contexto está marcado
-          const checkbox = document.querySelector(`input[data-random-context="${activeCtxId}"]`);
-          const isRandom = checkbox ? checkbox.checked : false;
-
-          try {
-            const playRes = await fetch('/api/spotify/play-next', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ deviceId: spotifyDeviceId, contextId: activeCtxId, random: isRandom, clientId })
-            });
-            if (playRes.ok) {
-              loadQueue();
-            }
-          } catch (e) {
-            console.error('Erro no Auto-DJ:', e);
-          }
-        }
-
-        isAutoPlayingNext = false;
-      }
-    } else if (!state.paused) {
-      currentTrackId = null; // reseta ao tocar normalmente
-      isAutoPlayingNext = false;
-    }
-  });
-
-  spotifyPlayer.connect();
+function tickClock() {
+  clockEl.textContent = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
-async function checkSpotifyStatus() {
-  try {
-    const res = await fetch('/api/spotify/status');
-    const data = await res.json();
-    if (data.connected) {
-      spotifyConnected = true;
-      spotifyConnectBtn.hidden = true;
-      spotifyDisconnectBtn.hidden = false;
-      if (!isOfficial) {
-        updateSpotifyStatusText();
-      } else if (!spotifyPlayer) {
-        spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
-        maybeStartPlayer();
-      }
-    } else {
-      spotifyStatusEl.textContent = 'Spotify ainda não conectado.';
-      spotifyConnectBtn.hidden = false;
-      spotifyDisconnectBtn.hidden = true;
-    }
-  } catch {
-    spotifyStatusEl.textContent = 'Não foi possível verificar a conexão com o Spotify.';
+function readSpotifyParams() {
+  const params = new URLSearchParams(location.search);
+  if (params.has('spotify_conectado')) toast('Spotify conectado!');
+  if (params.has('spotify_erro')) toast('Não foi possível conectar o Spotify (' + params.get('spotify_erro') + ').', 'erro');
+  if (params.has('spotify_conectado') || params.has('spotify_erro')) {
+    history.replaceState(null, '', location.pathname);
   }
 }
 
-spotifyPauseBtn.addEventListener('click', async () => {
-  await fetch('/api/spotify/pause', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId: spotifyDeviceId }),
-  });
-});
+async function boot() {
+  await ensureUniqueClientId();
+  qrImg.src = '/api/qrcode?' + Date.now();
+  tickClock();
+  readSpotifyParams();
 
-// --- Player Oficial: ligar/desligar e sincronizar entre telas ---
+  await Promise.all([checkSpotifyStatus(), pollPlayer(), loadQueue()]);
 
-function updateSpotifyStatusText() {
-  if (!spotifyConnected || isOfficial) return;
-  spotifyStatusEl.innerHTML = officialOwnerId
-    ? 'Spotify conectado — <strong>o som toca em outra tela</strong> (esta só controla)'
-    : 'Spotify conectado — <strong>nenhuma tela é o Player Oficial</strong>';
+  setInterval(tickClock, 10000);
+  setInterval(pollPlayer, CFG.POLL_PLAYER_MS);
+  setInterval(loadQueue, CFG.POLL_QUEUE_MS);
+  setInterval(checkSpotifyStatus, CFG.POLL_SPOTIFY_MS);
+  setInterval(() => {
+    updateProgressUi();
+    officialTick();
+  }, CFG.TICK_MS);
 }
 
-function stopLocalPlayer() {
-  if (spotifyPlayer) {
-    spotifyPlayer.disconnect(); // some o dispositivo e para o som desta tela
-    spotifyPlayer = null;
-  }
-  spotifyDeviceId = null;
-  spotifyPauseBtn.hidden = true;
-}
-
-function applyOfficialRole() {
-  officialBtn.textContent = `Player Oficial: ${isOfficial ? 'ON' : 'OFF'}`;
-  officialBtn.setAttribute('aria-pressed', String(isOfficial));
-
-  if (isOfficial) {
-    if (spotifyConnected && !spotifyPlayer) {
-      spotifyStatusEl.innerHTML = 'Spotify conectado — <strong>carregando player…</strong>';
-    }
-    maybeStartPlayer();
-  } else {
-    stopLocalPlayer();
-    updateSpotifyStatusText();
-  }
-  // Não re-renderiza a fila inteira — apenas atualiza button states
-  // Evita desincronizar o playback durante refresh periódico do official owner
-  if (lastData) {
-    const playBtns = document.querySelectorAll('[data-play-id]');
-    playBtns.forEach(btn => {
-      btn.disabled = !spotifyDeviceId || (!isOfficial && officialOwnerId);
-    });
-  }
-}
-
-function setOfficialOwner(ownerId) {
-  officialOwnerId = ownerId;
-  const nowOfficial = ownerId === clientId;
-  const changed = nowOfficial !== isOfficial;
-  isOfficial = nowOfficial;
-  if (changed) applyOfficialRole();
-  else updateSpotifyStatusText();
-}
-
-async function refreshOfficialOwner() {
-  try {
-    const res = await fetch('/api/spotify/official');
-    const data = await res.json();
-    setOfficialOwner(data.ownerId || null);
-  } catch {
-    // silencioso — tenta de novo no próximo ciclo
-  }
-}
-
-officialBtn.addEventListener('click', async () => {
-  officialBtn.disabled = true;
-  try {
-    const res = await fetch('/api/spotify/official', {
-      method: isOfficial ? 'DELETE' : 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.erro);
-    setOfficialOwner(data.ownerId || null);
-    if (officialChannel) officialChannel.postMessage('changed'); // avisa outras abas deste navegador na hora
-  } catch {
-    alert('Não foi possível alterar o Player Oficial.');
-  } finally {
-    officialBtn.disabled = false;
-  }
-});
-
-if (officialChannel) officialChannel.onmessage = () => refreshOfficialOwner();
-
-refreshOfficialOwner();
-setInterval(refreshOfficialOwner, 1000 * 3);
-
-checkSpotifyStatus();
-setInterval(checkSpotifyStatus, 1000 * 20);
-
-// Atualizar widget do now playing (visível em qualquer aba, mostrando o que está tocando no player oficial)
-function updateNowPlayingWidget() {
-  const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
-  const nowPlayingEl = document.getElementById('now-playing');
-
-  if (!tocandoRow) {
-    if (nowPlayingEl) nowPlayingEl.hidden = true;
-    return;
-  }
-
-  // Mostra o widget em qualquer aba (não só no player oficial)
-  if (nowPlayingEl) nowPlayingEl.hidden = false;
-
-  document.getElementById('now-playing-title').textContent = tocandoRow.querySelector('.track-row__name')?.textContent || '—';
-  document.getElementById('now-playing-artist').textContent = tocandoRow.querySelector('.track-row__artist')?.textContent || '—';
-  document.getElementById('now-playing-cover').src = tocandoRow.querySelector('.track-row__cover')?.src || '';
-  document.getElementById('now-playing-duration').textContent = tocandoRow.querySelector('.track-row__duration')?.textContent || '0:00';
-
-  // Próxima música
-  const nextRow = tocandoRow.nextElementSibling?.classList.contains('track-row') ? tocandoRow.nextElementSibling : null;
-  if (nextRow) {
-    document.getElementById('now-playing-next-title').textContent = nextRow.querySelector('.track-row__name')?.textContent || '—';
-    document.getElementById('now-playing-next-artist').textContent = nextRow.querySelector('.track-row__artist')?.textContent || '—';
-    document.getElementById('now-playing-next-cover').src = nextRow.querySelector('.track-row__cover')?.src || '';
-  } else {
-    document.getElementById('now-playing-next-title').textContent = '—';
-    document.getElementById('now-playing-next-artist').textContent = '—';
-    document.getElementById('now-playing-next-cover').src = '';
-  }
-
-  // Delete button
-  const deleteBtn = document.getElementById('now-playing-delete');
-  if (deleteBtn) {
-    deleteBtn.onclick = async () => {
-      const id = tocandoRow.dataset.id;
-      if (!confirm('Tem certeza que quer remover esta música?')) return;
-      await fetch(`/api/queue/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'removida' }),
-      });
-      loadQueue();
-    };
-  }
-}
-
-// Loop para atualizar a barra de progresso da música tocando
-setInterval(async () => {
-  if (!spotifyPlayer) return;
-  const tocandoRow = document.querySelector('.track-row[data-status="tocando"]');
-  if (!tocandoRow) return;
-  const queueItemId = tocandoRow.dataset.id;
-  const fillEl = document.getElementById(`progress-${queueItemId}`);
-  if (!fillEl) return;
-
-  // Atualizar widget do now playing
-  updateNowPlayingWidget();
-
-  const state = await spotifyPlayer.getCurrentState();
-  if (state && state.duration > 0 && !state.paused) {
-    currentPlayingPct = (state.position / state.duration) * 100;
-    fillEl.style.width = `${currentPlayingPct}%`;
-
-    // Atualizar widget do now playing
-    const nowPlayingProgress = document.getElementById('now-playing-progress');
-    if (nowPlayingProgress) {
-      nowPlayingProgress.style.width = `${currentPlayingPct}%`;
-    }
-    const nowPlayingTime = document.getElementById('now-playing-time');
-    if (nowPlayingTime) {
-      const totalSec = Math.round(state.position / 1000);
-      const min = Math.floor(totalSec / 60);
-      const sec = totalSec % 60;
-      nowPlayingTime.textContent = `${min}:${String(sec).padStart(2, '0')}`;
-    }
-
-    // Atualizar texto do botão
-    const playBtn = tocandoRow.querySelector('[data-play-id]');
-    if (playBtn) {
-      playBtn.textContent = 'Tocando';
-    }
-  }
-}, 1000);
+boot();

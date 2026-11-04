@@ -9,6 +9,7 @@ const searchRouter = require('./routes/search');
 const queueRouter = require('./routes/queue');
 const qrcodeRouter = require('./routes/qrcode');
 const spotifyAuthRouter = require('./routes/spotifyAuth');
+const playerRouter = require('./routes/player');
 const cronRouter = require('./routes/cron');
 
 const app = express();
@@ -17,10 +18,18 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
+// Estado do player/fila muda a cada segundo: nenhuma resposta da API pode ser reaproveitada do cache
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 app.use('/api/contexts', contextsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/qrcode', qrcodeRouter);
 app.use('/api/spotify', spotifyAuthRouter);
+// playerRouter: GET /api/player (estado) + controle remoto (play, next, pause, resume, volume) + posse do Player Oficial
+app.use('/api/player', playerRouter);
 app.use('/api/cron', cronRouter);
 // queueRouter cuida de GET /api/queue, POST /api/queue/suggestions e PATCH /api/queue/:id
 app.use('/api/queue', queueRouter);
