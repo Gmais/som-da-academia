@@ -231,4 +231,31 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+// DELETE /api/queue/context/:contextId -> staff exclui TODAS as músicas da lista, para sempre
+//  (apaga as linhas; o reset diário não traz nada de volta). Se a música que está tocando é
+//  desta lista, o som para antes de ela sumir.
+router.delete('/context/:contextId', async (req, res, next) => {
+  try {
+    const contextId = parseId(req.params.contextId);
+    if (!contextId) return res.status(400).json({ erro: 'ID de lista inválido.' });
+
+    const { rows: contextRows } = await query('SELECT id FROM contexts WHERE id = $1', [contextId]);
+    if (!contextRows[0]) return res.status(404).json({ erro: 'Lista não encontrada.' });
+
+    await player.stopIfPlayingInContext(contextId);
+    await query('UPDATE player_state SET next_item_id = NULL WHERE id = 1');
+
+    const { rows: deleted } = await query('DELETE FROM queue_items WHERE context_id = $1 RETURNING status', [contextId]);
+    // linhas 'removida' já estavam fora da lista: só limpa o lixo, não conta como música excluída agora
+    const excluidas = deleted.filter((r) => r.status !== 'removida').length;
+
+    res.json({ ok: true, excluidas });
+  } catch (err) {
+    if (err instanceof player.PlayerError) {
+      return res.status(err.status).json({ erro: err.message, codigo: err.code });
+    }
+    next(err);
+  }
+});
+
 module.exports = router;

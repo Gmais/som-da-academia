@@ -6,7 +6,8 @@ const router = express.Router();
 // GET /api/cron/reset-diario
 // Chamado pelo Vercel Cron às 23:59 (BRT) todo dia.
 // Vercel Cron Jobs sempre disparam via HTTP GET, por isso a rota precisa ser GET.
-// Volta todas as músicas 'tocada' para 'pendente', zerando o histórico do dia.
+// Volta as músicas 'tocada' (e a que estava 'tocando') para 'pendente', zerando o histórico do dia.
+// Músicas 'removida' NÃO voltam: excluir uma música é para sempre, não só por hoje.
 router.get('/reset-diario', async (req, res, next) => {
   try {
     const secret = process.env.CRON_SECRET;
@@ -16,7 +17,7 @@ router.get('/reset-diario', async (req, res, next) => {
     }
 
     const { rowCount } = await query(
-      "UPDATE queue_items SET status = 'pendente', atualizado_em = $1 WHERE status != 'pendente'",
+      "UPDATE queue_items SET status = 'pendente', atualizado_em = $1 WHERE status IN ('tocada', 'tocando')",
       [Date.now()]
     );
 

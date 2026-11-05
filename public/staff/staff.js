@@ -165,7 +165,7 @@ let snap = null;            // último GET /api/player + quando chegou (performa
 let lastQueue = null;       // último GET /api/queue
 let viewingContextId = null; // null = lista padrão (Pedidos de Alunos)
 
-const playlistState = {};   // contextId -> { busy: bool, url: string }
+const clearingContexts = new Set(); // listas cujo "Excluir todas" está em andamento
 
 // ------------------------------------------------------- estado do player
 
@@ -330,7 +330,7 @@ let stripsSig = '';
 function renderStrips(force) {
   const data = lastQueue;
   if (!data) return;
-  const sig = JSON.stringify([data, playlistState]);
+  const sig = JSON.stringify([data, [...clearingContexts]]);
   if (!force && sig === stripsSig) return;
   stripsSig = sig;
 
@@ -340,10 +340,8 @@ function renderStrips(force) {
     .map((ctx) => {
       const isViewing = ctx.id === data.viewingContextId;
       const isActiveContext = data.activeContext && ctx.id === data.activeContext.id;
-      const pl = playlistState[ctx.id];
-      const plBtn = pl && pl.url
-        ? `<a class="btn btn--primary" style="margin-left: 8px" href="${escapeHtml(pl.url)}" target="_blank" rel="noopener">Abrir playlist ↗</a>`
-        : `<button class="btn btn--primary" style="margin-left: 8px" data-create-playlist="${ctx.id}" ${pl && pl.busy ? 'disabled' : ''} title="Transforma a fila desse contexto em uma playlist no Spotify">${pl && pl.busy ? 'Criando…' : 'Criar Playlist'}</button>`;
+      const clearing = clearingContexts.has(ctx.id);
+      const clearBtn = `<button class="btn btn--danger" style="margin-left: 8px" data-clear-context="${ctx.id}" ${clearing ? 'disabled' : ''} title="Exclui para sempre todas as músicas desta lista">${clearing ? 'Excluindo…' : 'Excluir todas as músicas'}</button>`;
 
       const body = isViewing
         ? `<div class="strip__body" data-body>
@@ -362,7 +360,7 @@ function renderStrips(force) {
                 <input type="checkbox" data-random-context="${ctx.id}" class="random-checkbox" ${ctx.aleatorio ? 'checked' : ''} />
                 <span class="random-label">Tocar Aleatório</span>
               </label>
-              ${plBtn}
+              ${clearBtn}
             </span>
           </div>
           ${body}
@@ -472,20 +470,27 @@ async function control(method, url, body) {
 // -------------------------------------------------------------- eventos: listas
 
 strips.addEventListener('click', async (e) => {
-  const createPlaylistBtn = e.target.closest('[data-create-playlist]');
-  if (createPlaylistBtn) {
-    const contextId = Number(createPlaylistBtn.dataset.createPlaylist);
-    playlistState[contextId] = { busy: true };
+  const clearBtn = e.target.closest('[data-clear-context]');
+  if (clearBtn) {
+    if (clearBtn.disabled) return;
+    const contextId = Number(clearBtn.dataset.clearContext);
+    const ctx = lastQueue && lastQueue.contexts.find((c) => c.id === contextId);
+    const nome = ctx ? ctx.nome : 'esta lista';
+    const tocandoAqui = snap && snap.nowPlaying && snap.nowPlaying.contextId === contextId;
+    const aviso = tocandoAqui ? `\n\nA música que está tocando agora vai parar.` : '';
+    if (!confirm(`Excluir TODAS as músicas de "${nome}"?\n\nElas saem da lista para sempre (não voltam no outro dia) e isso não pode ser desfeito.${aviso}`)) return;
+
+    clearingContexts.add(contextId);
     renderStrips(true);
-    const r = await api('POST', '/api/spotify/playlist', { contextId });
+    const r = await api('DELETE', `/api/queue/context/${contextId}`);
+    clearingContexts.delete(contextId);
     if (r.ok) {
-      playlistState[contextId] = { url: r.data.url };
-      const faltando = (r.data.naoEncontradas || []).length;
-      toast(`Playlist criada com ${r.data.adicionadas} músicas.` + (faltando ? ` ${faltando} não foram achadas no Spotify.` : ''));
+      const n = r.data.excluidas || 0;
+      toast(n ? `${n} ${n === 1 ? 'música excluída' : 'músicas excluídas'} de "${nome}".` : `"${nome}" já estava vazia.`);
     } else {
-      delete playlistState[contextId];
-      toast(r.data.erro || 'Não foi possível criar a playlist.', 'erro');
+      toast(r.data.erro || 'Não foi possível excluir as músicas.', 'erro');
     }
+    await refreshAll();
     renderStrips(true);
     return;
   }

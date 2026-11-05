@@ -31,7 +31,8 @@ app.use('/api/spotify', spotifyAuthRouter);
 // playerRouter: GET /api/player (estado) + controle remoto (play, next, pause, resume, volume) + posse do Player Oficial
 app.use('/api/player', playerRouter);
 app.use('/api/cron', cronRouter);
-// queueRouter cuida de GET /api/queue, POST /api/queue/suggestions e PATCH /api/queue/:id
+// queueRouter cuida de GET /api/queue, POST /api/queue/suggestions, PATCH /api/queue/:id
+// e DELETE /api/queue/context/:contextId (excluir todas as músicas de uma lista)
 app.use('/api/queue', queueRouter);
 
 // Servir os arquivos estáticos também localmente (no Vercel, o próprio

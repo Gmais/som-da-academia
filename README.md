@@ -27,7 +27,8 @@ O som é tocado pelo Spotify da academia (conta **Premium** conectada em "Conect
 - O **player no topo** (em todas as telas, em qualquer lista aberta) mostra a música tocando, o progresso e a **próxima** — no modo aleatório a "próxima" mostrada é exatamente a que vai tocar.
 - **Auto-DJ**: quando a música está para acabar, o Player Oficial passa para a próxima da lista (aleatória ou na ordem). Por padrão a troca acontece nos **últimos 5 segundos** para não ter silêncio entre as músicas (`ANTECIPAR_FIM_MS` no topo de `public/staff/staff.js`; `0` toca até o último segundo). A última música da lista sempre toca até o fim.
 - Se a tela oficial for fechada, as outras mostram "Player Oficial offline" e os botões de tocar explicam o que fazer.
-- À meia-noite (23:59, horário de Brasília) um cron devolve todas as músicas à fila (`/api/cron/reset-diario`). Defina `CRON_SECRET` para que só o Vercel Cron consiga disparar.
+- À meia-noite (23:59, horário de Brasília) um cron devolve à fila as músicas já tocadas (`/api/cron/reset-diario`). Músicas **excluídas** (botão "Remover", "✕" ou "Excluir todas as músicas") não voltam: excluir é para sempre. Defina `CRON_SECRET` para que só o Vercel Cron consiga disparar.
+- "Excluir todas as músicas" (no cabeçalho de cada lista) apaga de uma vez todas as músicas daquela lista; se a que está tocando for dela, o som para.
 
 ## Estrutura do projeto
 
